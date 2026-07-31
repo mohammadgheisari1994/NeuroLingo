@@ -130,7 +130,17 @@ _HARD = ft.Colors.ORANGE_400
 _GOOD = ft.Colors.BLUE_400
 _EASY = ft.Colors.GREEN_400
 _SURFACE = ft.Colors.with_opacity(0.08, ft.Colors.WHITE)
+_SURFACE_RAISED = ft.Colors.with_opacity(0.14, ft.Colors.WHITE)
 _ACCENT = ft.Colors.INDIGO_300
+_ACCENT_DEEP = ft.Colors.INDIGO_600
+_BG = ft.Colors.GREY_900
+
+_CARD_SHADOW = ft.BoxShadow(
+    spread_radius=0,
+    blur_radius=16,
+    color=ft.Colors.with_opacity(0.35, ft.Colors.BLACK),
+    offset=ft.Offset(0, 4),
+)
 
 
 # ── Helper: Padding shorthands ────────────────────────────────────────────────
@@ -141,6 +151,13 @@ def _pad_all(n: int) -> ft.Padding:
 
 def _pad_sym(*, v: int = 0, h: int = 0) -> ft.Padding:
     return ft.Padding(top=v, bottom=v, left=h, right=h)
+
+
+def _border_all(width: float, color: str) -> ft.Border:
+    """This installed Flet version has no ft.border.all() convenience
+    function — build a uniform Border from four identical BorderSides."""
+    side = ft.BorderSide(width=width, color=color)
+    return ft.Border(top=side, right=side, bottom=side, left=side)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -177,7 +194,7 @@ class NeuroLingoApp:
         p.window.height = 860
         p.window.min_width = 380
         p.padding = 0
-        p.bgcolor = ft.Colors.GREY_900
+        p.bgcolor = _BG
 
     # ── UI skeleton ───────────────────────────────────────────────────────────
 
@@ -203,8 +220,15 @@ class NeuroLingoApp:
         self._review_panel = self._build_review_panel()
         self._add_panel = self._build_add_panel()
 
-        self._body = ft.Container(
+        self._content_switcher = ft.AnimatedSwitcher(
             content=self._home_panel,
+            transition=ft.AnimatedSwitcherTransition.FADE,
+            duration=200,
+            switch_in_curve=ft.AnimationCurve.EASE_OUT,
+            switch_out_curve=ft.AnimationCurve.EASE_IN,
+        )
+        self._body = ft.Container(
+            content=self._content_switcher,
             expand=True,
             padding=_pad_all(16),
         )
@@ -213,6 +237,9 @@ class NeuroLingoApp:
         self.page.navigation_bar = ft.NavigationBar(
             selected_index=self.TAB_HOME,
             bgcolor=ft.Colors.GREY_800,
+            indicator_color=ft.Colors.with_opacity(0.25, _ACCENT),
+            shadow_color=ft.Colors.BLACK,
+            elevation=8,
             destinations=[
                 ft.NavigationBarDestination(
                     icon=ft.Icons.HOME_OUTLINED,
@@ -248,7 +275,7 @@ class NeuroLingoApp:
             self._refresh_dashboard()
         elif self._tab == self.TAB_REVIEW:
             self._load_next_card()
-        self._body.content = panels[self._tab]
+        self._content_switcher.content = panels[self._tab]
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -270,17 +297,8 @@ class NeuroLingoApp:
             alignment=ft.MainAxisAlignment.CENTER,
         )
 
-        self._start_btn = ft.FilledButton(
-            "Start Review Session",
-            icon=ft.Icons.PLAY_ARROW_ROUNDED,
-            style=ft.ButtonStyle(
-                bgcolor=_ACCENT,
-                color=ft.Colors.WHITE,
-                padding=_pad_sym(v=14, h=24),
-                shape=ft.RoundedRectangleBorder(radius=12),
-            ),
-            on_click=self._go_to_review,
-            expand=True,
+        self._start_btn = self._gradient_button(
+            "Start Review Session", ft.Icons.PLAY_ARROW_ROUNDED, self._go_to_review,
         )
 
         self._recent_list = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
@@ -306,11 +324,44 @@ class NeuroLingoApp:
             expand=True,
         )
 
+    def _gradient_button(self, label: str, icon, on_click) -> ft.Container:
+        """A pill-shaped, gradient-filled primary action button — used for
+        the app's two main calls to action (start a review, save a sentence)
+        so they read as the same visual language."""
+        return ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(icon, color=ft.Colors.WHITE),
+                    ft.Text(label, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600, size=15),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=8,
+            ),
+            gradient=ft.LinearGradient(
+                begin=ft.alignment.Alignment(-1, 0),
+                end=ft.alignment.Alignment(1, 0),
+                colors=[_ACCENT_DEEP, _ACCENT],
+            ),
+            border_radius=14,
+            padding=_pad_sym(v=14, h=24),
+            shadow=_CARD_SHADOW,
+            ink=True,
+            on_click=on_click,
+            expand=True,
+        )
+
     def _stat_card(self, label: str, value_widget: ft.Text, icon, color) -> ft.Container:
+        icon_badge = ft.Container(
+            content=ft.Icon(icon, color=color, size=18),
+            bgcolor=ft.Colors.with_opacity(0.16, color),
+            border_radius=999,
+            padding=8,
+        )
         return ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(icon, color=color, size=22),
+                    icon_badge,
+                    ft.Container(height=6),
                     value_widget,
                     ft.Text(label, size=11, color=ft.Colors.WHITE54),
                 ],
@@ -318,8 +369,9 @@ class NeuroLingoApp:
                 spacing=2,
             ),
             bgcolor=_SURFACE,
-            border_radius=12,
-            padding=_pad_sym(v=12, h=8),
+            border_radius=16,
+            border=_border_all(1, ft.Colors.with_opacity(0.06, ft.Colors.WHITE)),
+            padding=_pad_sym(v=14, h=8),
             expand=True,
         )
 
@@ -352,11 +404,12 @@ class NeuroLingoApp:
                             ft.Row([
                                 ft.Container(
                                     content=ft.Text(
-                                        card.status.upper(), size=10, color=ft.Colors.WHITE,
+                                        card.status.upper(), size=10,
+                                        weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
                                     ),
                                     bgcolor=self._status_color(card.status),
-                                    border_radius=4,
-                                    padding=_pad_sym(v=2, h=6),
+                                    border_radius=999,
+                                    padding=_pad_sym(v=3, h=8),
                                 ),
                                 ft.Text(f"Interval: {card.interval}d", size=11, color=ft.Colors.WHITE54),
                             ], spacing=8),
@@ -364,7 +417,8 @@ class NeuroLingoApp:
                         spacing=4,
                     ),
                     bgcolor=_SURFACE,
-                    border_radius=10,
+                    border_radius=12,
+                    border=_border_all(1, ft.Colors.with_opacity(0.05, ft.Colors.WHITE)),
                     padding=_pad_all(12),
                 )
             )
@@ -391,7 +445,7 @@ class NeuroLingoApp:
         self.page.navigation_bar.selected_index = self.TAB_REVIEW
         self._tab = self.TAB_REVIEW
         self._load_next_card()
-        self._body.content = self._review_panel
+        self._content_switcher.content = self._review_panel
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -434,7 +488,12 @@ class NeuroLingoApp:
         self._card_container = ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(ft.Icons.TRANSLATE, color=_ACCENT, size=32),
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.TRANSLATE, color=_ACCENT, size=26),
+                        bgcolor=ft.Colors.with_opacity(0.16, _ACCENT),
+                        border_radius=999,
+                        padding=12,
+                    ),
                     ft.Container(height=8),
                     self._card_en,
                     ft.Container(height=12),
@@ -447,8 +506,10 @@ class NeuroLingoApp:
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=4,
             ),
-            bgcolor=_SURFACE,
-            border_radius=16,
+            bgcolor=_SURFACE_RAISED,
+            border_radius=18,
+            border=_border_all(1, ft.Colors.with_opacity(0.08, ft.Colors.WHITE)),
+            shadow=_CARD_SHADOW,
             padding=_pad_all(24),
         )
 
@@ -550,7 +611,12 @@ class NeuroLingoApp:
         self._empty_state = ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(ft.Icons.CELEBRATION_OUTLINED, size=64, color=_EASY),
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.CELEBRATION_OUTLINED, size=48, color=_EASY),
+                        bgcolor=ft.Colors.with_opacity(0.14, _EASY),
+                        border_radius=999,
+                        padding=20,
+                    ),
                     ft.Container(height=16),
                     ft.Text(
                         "All caught up!",
@@ -802,7 +868,7 @@ class NeuroLingoApp:
     def _go_to_add(self, _e=None) -> None:
         self.page.navigation_bar.selected_index = self.TAB_ADD
         self._tab = self.TAB_ADD
-        self._body.content = self._add_panel
+        self._content_switcher.content = self._add_panel
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -837,18 +903,7 @@ class NeuroLingoApp:
 
         self._save_status = ft.Text("", color=_EASY, size=13)
 
-        save_btn = ft.FilledButton(
-            "Save Sentence",
-            icon=ft.Icons.SAVE_OUTLINED,
-            style=ft.ButtonStyle(
-                bgcolor=_ACCENT,
-                color=ft.Colors.WHITE,
-                padding=_pad_sym(v=14),
-                shape=ft.RoundedRectangleBorder(radius=12),
-            ),
-            on_click=self._save_sentence,
-            expand=True,
-        )
+        save_btn = self._gradient_button("Save Sentence", ft.Icons.SAVE_OUTLINED, self._save_sentence)
 
         return ft.Column(
             [
