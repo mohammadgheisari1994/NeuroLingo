@@ -11,6 +11,7 @@ Run:
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -119,6 +120,7 @@ class NeuroLingoApp:
         self._current_card: Card | None = None
         self._current_sentence: Sentence | None = None
         self._show_translation = False
+        self._advance_task: asyncio.Task | None = None
         self._setup_page()
         self._build_ui()
         self._refresh_dashboard()
@@ -585,11 +587,16 @@ class NeuroLingoApp:
         self._progress_label.value = f"{self._session_count} reviewed this session"
         self.page.update()
 
-        # Auto-advance after 1.2 s
-        import threading
-        threading.Timer(1.2, self._advance_after_grade).start()
+        # Auto-advance after 1.2 s, scheduled on the page's own event loop so we
+        # never touch Flet controls from a background thread (a raw
+        # threading.Timer would). Cancel any still-pending advance first so
+        # back-to-back grades can't race and load two cards on top of each other.
+        if self._advance_task is not None:
+            self._advance_task.cancel()
+        self._advance_task = self.page.run_task(self._delayed_advance)
 
-    def _advance_after_grade(self) -> None:
+    async def _delayed_advance(self) -> None:
+        await asyncio.sleep(1.2)
         self._load_next_card()
 
     def _go_to_add(self, _e=None) -> None:
