@@ -16,7 +16,7 @@ google-generativeai>=0.8.0
 # macOS Metal GPU : CMAKE_ARGS="-DLLAMA_METAL=on"   pip install llama-cpp-python
 # CUDA            : CMAKE_ARGS="-DLLAMA_CUBLAS=on"  pip install llama-cpp-python
 # CPU-only        : pip install llama-cpp-python
-llama-cpp-python>=0.2.80
+llama-cpp-python>=0.3.34
 
 # ── Audio / Shadowing ────────────────────────────────────────────────────────
 sounddevice>=0.5.0
