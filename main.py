@@ -4,7 +4,8 @@ NeuroLingo — main entry point & demo UI.
 Wires together all built modules:
   • DatabaseRepository  (SQLite, FK-safe)
   • SM-2 algorithm      (spaced repetition)
-  • NumpyVectorStore    (offline RAG — not yet surfaced in UI, Module 4)
+  • LLMRouter + RAGManager (AI tutor: cloud LLMs with local llama.cpp fallback,
+    grounded by a hashing-embedding NumPy vector store)
 
 Run:
     python3.13 main.py
@@ -19,6 +20,11 @@ from pathlib import Path
 import flet as ft
 
 from logger_config import get_logger, setup_logging
+from neurolingo.core.llm.base import LLMConfig, ProviderError
+from neurolingo.core.llm.router import LLMRouter
+from neurolingo.core.rag.embeddings import HashingEmbeddingProvider
+from neurolingo.core.rag.rag_manager import RAGManager
+from neurolingo.core.rag.vectorstore import NumpyVectorStore
 from neurolingo.core.srs.algorithm import (
     GRADE_AGAIN,
     GRADE_EASY,
@@ -33,6 +39,7 @@ log = setup_logging()
 _log = get_logger(__name__)
 
 DB_PATH = Path("data/neurolingo.db")
+VECTOR_STORE_PATH = Path("data/knowledge")
 
 # ── Sample sentences loaded on first run ──────────────────────────────────────
 
@@ -84,6 +91,14 @@ def _seed(repo: DatabaseRepository) -> None:
     _log.info("Seeded %d sample sentences into fresh database", len(_SAMPLES))
 
 
+def _seed_knowledge(rag: RAGManager) -> None:
+    """Index each sample sentence's grammar note so the AI tutor has real
+    context to retrieve instead of answering with no grounding at all."""
+    for en, _fa, notes in _SAMPLES:
+        rag.add_knowledge(f"{en} — {notes}", metadata={"source": "seed"})
+    _log.info("Indexed %d grammar notes into the knowledge base", len(_SAMPLES))
+
+
 # ── Colour palette ────────────────────────────────────────────────────────────
 
 _AGAIN = ft.Colors.RED_400
@@ -113,9 +128,10 @@ class NeuroLingoApp:
     TAB_REVIEW = 1
     TAB_ADD = 2
 
-    def __init__(self, page: ft.Page, repo: DatabaseRepository) -> None:
+    def __init__(self, page: ft.Page, repo: DatabaseRepository, rag: RAGManager) -> None:
         self.page = page
         self.repo = repo
+        self.rag = rag
         self._tab = self.TAB_HOME
         self._current_card: Card | None = None
         self._current_sentence: Sentence | None = None
@@ -452,6 +468,43 @@ class NeuroLingoApp:
             visible=False,
         )
 
+        # AI Tutor — ask for a neuroscience-informed explanation of the sentence,
+        # optionally grounded in the student's own attempt/paraphrase.
+        self._tutor_input = ft.TextField(
+            label="Your attempt (optional)",
+            hint_text="Paraphrase the sentence or ask what's confusing...",
+            multiline=True,
+            min_lines=2,
+            max_lines=3,
+            border_radius=10,
+            filled=True,
+            bgcolor=_SURFACE,
+            visible=False,
+        )
+        self._tutor_ask_btn = ft.OutlinedButton(
+            "Ask AI Tutor",
+            icon=ft.Icons.PSYCHOLOGY_ALT_OUTLINED,
+            on_click=self._ask_tutor,
+            visible=False,
+        )
+        self._tutor_loading = ft.ProgressRing(width=16, height=16, visible=False)
+        self._tutor_response_text = ft.Text("", size=13, color=ft.Colors.INDIGO_200)
+        self._tutor_response = ft.Container(
+            content=self._tutor_response_text,
+            bgcolor=_SURFACE,
+            border_radius=10,
+            padding=_pad_all(12),
+            visible=False,
+        )
+        self._tutor_section = ft.Column(
+            [
+                self._tutor_input,
+                ft.Row([self._tutor_ask_btn, self._tutor_loading], spacing=12),
+                self._tutor_response,
+            ],
+            spacing=8,
+        )
+
         # Empty state
         self._empty_state = ft.Container(
             content=ft.Column(
@@ -487,6 +540,8 @@ class NeuroLingoApp:
                 ft.Container(height=16),
                 self._grade_row,
                 self._result_banner,
+                ft.Container(height=8),
+                self._tutor_section,
                 self._empty_state,
             ],
             spacing=8,
@@ -498,6 +553,11 @@ class NeuroLingoApp:
         """Pull next due or new card from DB and display it."""
         self._show_translation = False
         self._result_banner.visible = False
+        self._tutor_input.value = ""
+        self._tutor_input.visible = False
+        self._tutor_ask_btn.visible = False
+        self._tutor_loading.visible = False
+        self._tutor_response.visible = False
 
         # Prefer overdue → then new
         due = self.repo.get_due_cards(limit=1)
@@ -534,7 +594,46 @@ class NeuroLingoApp:
         self._card_fa.visible = True
         self._reveal_btn.visible = False
         self._grade_row.visible = True
+        self._tutor_input.visible = True
+        self._tutor_ask_btn.visible = True
         self.page.update()
+
+    async def _ask_tutor(self, _e=None) -> None:
+        """Send the current sentence (+ the student's own attempt, if any) to
+        the AI tutor via RAGManager.tutor_analyze_mistake() and show the
+        neuroscience-informed explanation it returns."""
+        if not self._current_sentence:
+            return
+
+        attempt = (self._tutor_input.value or "").strip()
+        if not attempt:
+            attempt = "(No attempt given — just explain this sentence.)"
+
+        self._tutor_ask_btn.disabled = True
+        self._tutor_loading.visible = True
+        self._tutor_response.visible = False
+        self.page.update()
+
+        try:
+            explanation = await self.rag.tutor_analyze_mistake(
+                target_sentence=self._current_sentence.sentence_en,
+                user_input=attempt,
+            )
+            self._tutor_response_text.value = explanation
+            self._tutor_response_text.color = ft.Colors.INDIGO_200
+        except ProviderError as exc:
+            _log.warning("AI tutor unavailable: %s", exc)
+            self._tutor_response_text.value = (
+                "AI tutor isn't available right now — add an API key "
+                "(ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY) or a "
+                "local GGUF model (LOCAL_MODEL_PATH) to your .env file."
+            )
+            self._tutor_response_text.color = ft.Colors.ORANGE_300
+        finally:
+            self._tutor_ask_btn.disabled = False
+            self._tutor_loading.visible = False
+            self._tutor_response.visible = True
+            self.page.update()
 
     def _submit_grade(self, grade: int) -> None:
         if not self._current_card:
@@ -712,7 +811,14 @@ def main(page: ft.Page) -> None:
         repo = DatabaseRepository(DB_PATH)
         repo.create_schema()
         _seed(repo)
-        NeuroLingoApp(page, repo)
+
+        router = LLMRouter(LLMConfig.from_env())
+        store = NumpyVectorStore(persist_path=VECTOR_STORE_PATH)
+        rag = RAGManager(store, HashingEmbeddingProvider(), router)
+        if len(store) == 0:
+            _seed_knowledge(rag)
+
+        NeuroLingoApp(page, repo, rag)
         _log.info("NeuroLingo started successfully")
     except Exception:
         _log.exception("Fatal error during startup")

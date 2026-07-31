@@ -18,6 +18,8 @@ logs/*.log.*
 # Local data
 data/*.db
 data/*.sqlite
+data/*.npy
+data/knowledge.json
 
 # ML model caches
 .cache/
