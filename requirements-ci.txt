@@ -1,4 +1,10 @@
-# Lightweight CI subset — no heavy ML/audio packages needed for unit tests
+# Lightweight CI subset — no heavy ML/audio packages needed for unit tests.
+# flet IS included (despite being the UI framework) because tests/unit/test_main.py
+# imports main.py, which imports flet at module level — without it, test collection
+# fails on CI even though it passes locally (flet is already installed there via the
+# full requirements.txt). flet has prebuilt wheels and no GPU/ML dependencies, so it
+# doesn't violate the "lightweight" goal this file exists for.
+flet>=0.21.0
 numpy>=1.26.0
 python-dotenv>=1.0.0
 pytest>=8.2.0
