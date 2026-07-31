@@ -13,6 +13,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ from neurolingo.core.srs.algorithm import (
     GRADE_HARD,
     apply_sm2,
 )
+from neurolingo.db.backup import BackupFormatError, export_backup, import_backup
 from neurolingo.db.models import Card, CardStatus, ReviewLog, Sentence
 from neurolingo.db.repository import DatabaseRepository
 
@@ -274,6 +276,10 @@ class NeuroLingoApp:
             on_change=self._on_tab_change,
         )
         self.page.appbar = self._appbar
+
+        self._file_picker = ft.FilePicker()
+        self.page.services.append(self._file_picker)
+
         self.page.add(self._body)
 
     # ── Tab switching ─────────────────────────────────────────────────────────
@@ -1016,6 +1022,14 @@ class NeuroLingoApp:
         )
         back_btn = ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self._back_from_settings)
 
+        self._backup_status = ft.Text("", size=12)
+        export_btn = ft.OutlinedButton(
+            "Export Backup", icon=ft.Icons.DOWNLOAD_OUTLINED, on_click=self._export_backup,
+        )
+        import_btn = ft.OutlinedButton(
+            "Import Backup", icon=ft.Icons.UPLOAD_OUTLINED, on_click=self._import_backup,
+        )
+
         return ft.Column(
             [
                 ft.Row(
@@ -1039,6 +1053,15 @@ class NeuroLingoApp:
                 ft.Container(height=16),
                 ft.Text("Provider status", size=14, weight=ft.FontWeight.W_600),
                 self._settings_status_column,
+                ft.Container(height=16),
+                ft.Text("Data", size=14, weight=ft.FontWeight.W_600),
+                ft.Text(
+                    "Back up every sentence, card, and review history to a JSON file, "
+                    "or restore from one.",
+                    size=12, color=ft.Colors.WHITE54,
+                ),
+                ft.Row([export_btn, import_btn], spacing=8),
+                self._backup_status,
             ],
             spacing=12,
             scroll=ft.ScrollMode.AUTO,
@@ -1113,6 +1136,53 @@ class NeuroLingoApp:
             self.TAB_ADD: self._add_panel,
         }
         self._content_switcher.content = panels[self._tab]
+        self.page.update()
+
+    async def _export_backup(self, _e=None) -> None:
+        """Serialise every sentence/card/review-log into a JSON file and let
+        the user save it via the browser's/OS's native save dialog."""
+        backup = export_backup(self.repo)
+        payload = json.dumps(backup, ensure_ascii=False, indent=2).encode("utf-8")
+        file_name = f"neurolingo_backup_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}.json"
+        try:
+            await self._file_picker.save_file(
+                dialog_title="Export NeuroLingo Backup",
+                file_name=file_name,
+                src_bytes=payload,
+                allowed_extensions=["json"],
+            )
+            self._backup_status.value = f"Exported {len(backup['sentences'])} sentence(s)."
+            self._backup_status.color = _EASY
+        except Exception:
+            _log.exception("Backup export failed")
+            self._backup_status.value = "Export failed — check logs/neurolingo.log."
+            self._backup_status.color = _AGAIN
+        self.page.update()
+
+    async def _import_backup(self, _e=None) -> None:
+        """Let the user pick a previously-exported JSON file and restore it
+        into the current database (adds new rows; never overwrites)."""
+        try:
+            files = await self._file_picker.pick_files(
+                dialog_title="Import NeuroLingo Backup",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                with_data=True,
+            )
+            if not files:
+                return  # user cancelled the dialog
+
+            data = json.loads(files[0].bytes.decode("utf-8"))
+            imported = import_backup(self.repo, data)
+            self._backup_status.value = f"Imported {imported} sentence(s)."
+            self._backup_status.color = _EASY
+        except BackupFormatError as exc:
+            self._backup_status.value = f"Not a valid backup file: {exc}"
+            self._backup_status.color = _AGAIN
+        except Exception:
+            _log.exception("Backup import failed")
+            self._backup_status.value = "Import failed — check logs/neurolingo.log."
+            self._backup_status.color = _AGAIN
         self.page.update()
 
 
