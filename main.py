@@ -289,7 +289,7 @@ class NeuroLingoApp:
 
         self._stat_due.value = str(due_count)
         self._stat_new.value = str(new_count)
-        self._stat_total.value = str(len(_SAMPLES))
+        self._stat_total.value = str(self.repo.count_sentences())
 
         # Populate recent sentence list
         all_due = self.repo.get_due_cards(limit=20)

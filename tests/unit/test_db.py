@@ -58,6 +58,20 @@ def test_get_sentence_returns_none_for_missing_id(repo):
     assert repo.get_sentence(99999) is None
 
 
+def test_count_sentences_reflects_inserts(repo):
+    assert repo.count_sentences() == 0
+    repo.add_sentence(Sentence(sentence_en="One.", sentence_fa="یک."))
+    repo.add_sentence(Sentence(sentence_en="Two.", sentence_fa="دو."))
+    assert repo.count_sentences() == 2
+
+
+def test_count_sentences_reflects_deletes(repo):
+    s = repo.add_sentence(Sentence(sentence_en="Gone soon.", sentence_fa="به زودی رفت."))
+    assert repo.count_sentences() == 1
+    repo.delete_sentence(s.id)
+    assert repo.count_sentences() == 0
+
+
 def test_delete_sentence_removes_row(repo, sentence):
     repo.delete_sentence(sentence.id)
     assert repo.get_sentence(sentence.id) is None
