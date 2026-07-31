@@ -54,6 +54,27 @@ class NumpyVectorStore(VectorStore):
     def __len__(self) -> int:
         return len(self._docs)
 
+    @property
+    def vector_dim(self) -> int | None:
+        """Dimensionality of the stored vectors, or None if the store is
+        empty (there's nothing to infer a dimension from yet)."""
+        return int(self._docs[0].vector.shape[0]) if self._docs else None
+
+    def clear(self) -> None:
+        """
+        Remove every indexed document and delete any persisted files.
+
+        Used when switching embedding providers to a different vector
+        dimension — old vectors of dimension A can't be compared against a
+        new query of dimension B, so the store must be wiped and re-seeded
+        rather than silently producing a shape-mismatch error later.
+        """
+        self._docs = []
+        if self._persist_path:
+            self._persist_path.with_suffix(".npy").unlink(missing_ok=True)
+            self._persist_path.with_suffix(".json").unlink(missing_ok=True)
+        _log.info("VectorStore cleared | path=%s", self._persist_path)
+
     # ── Mutation ──────────────────────────────────────────────────────────────
 
     def add(

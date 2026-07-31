@@ -126,3 +126,26 @@ class APIEmbeddingProvider(EmbeddingProvider):
         if norm > 1e-9:
             vec /= norm
         return vec
+
+
+# ── Factory ───────────────────────────────────────────────────────────────────
+
+def build_embedding_provider(openai_api_key: str = "") -> EmbeddingProvider:
+    """
+    Prefer real embeddings (meaningfully better retrieval quality) when a
+    usable OpenAI key is configured; fall back to the offline hashing trick
+    otherwise — the same cloud-then-offline pattern LLMRouter already uses
+    for text generation.
+
+    Note: is_available() only checks that the key is present and the openai
+    package importable, not that the key is actually valid/reachable — same
+    as every LLMProvider. Callers that use the returned provider to seed a
+    knowledge base at startup should handle embedding failures gracefully
+    rather than let a bad/unreachable key crash the whole app.
+    """
+    api_provider = APIEmbeddingProvider(api_key=openai_api_key)
+    if api_provider.is_available():
+        _log.info("Using APIEmbeddingProvider (OpenAI) for RAG embeddings")
+        return api_provider
+    _log.info("Using HashingEmbeddingProvider (offline) for RAG embeddings")
+    return HashingEmbeddingProvider()
