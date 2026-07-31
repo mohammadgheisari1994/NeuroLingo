@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from neurolingo.core.rag.embeddings import HashingEmbeddingProvider
-from neurolingo.core.rag.rag_manager import RAGManager, _build_tutor_prompt
+from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation, _build_tutor_prompt
 from neurolingo.core.rag.vectorstore import NumpyVectorStore
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -249,6 +249,7 @@ def rag_manager(embedder):
     store = NumpyVectorStore()
     mock_router = AsyncMock()
     mock_router.generate_explanation = AsyncMock(return_value="Great explanation!")
+    mock_router.chat = AsyncMock(return_value="Great explanation!")
     return RAGManager(
         vector_store=store,
         embedding_provider=embedder,
@@ -313,3 +314,89 @@ def test_retrieve_respects_top_k(rag_manager):
         rag_manager.add_knowledge(f"Grammar rule number {i}.")
     results = rag_manager.retrieve("grammar rule", top_k=3)
     assert len(results) <= 3
+
+
+# ── TutorConversation (multi-turn follow-ups) ─────────────────────────────────
+
+def test_start_conversation_returns_tutor_conversation(rag_manager):
+    conversation = rag_manager.start_conversation(
+        target_sentence="She has gone to the store.",
+        user_input="She have went to the store.",
+    )
+    assert isinstance(conversation, TutorConversation)
+    assert len(conversation.messages) == 1
+    assert conversation.messages[0]["role"] == "user"
+
+
+def test_start_conversation_seed_prompt_matches_one_shot(rag_manager):
+    """The first-turn prompt should contain the same target/attempt text
+    tutor_analyze_mistake() uses, so the two entrypoints stay equivalent."""
+    conversation = rag_manager.start_conversation(
+        target_sentence="I am learning English.",
+        user_input="I learning English.",
+    )
+    seed_prompt = conversation.messages[0]["content"]
+    assert "I am learning English." in seed_prompt
+    assert "I learning English." in seed_prompt
+
+
+async def test_conversation_send_with_no_args_runs_seeded_first_turn(rag_manager):
+    conversation = rag_manager.start_conversation("Target.", "Attempt.")
+    response = await conversation.send()
+    assert response == "Great explanation!"
+    assert len(conversation.messages) == 2
+    assert conversation.messages[-1]["role"] == "assistant"
+
+
+async def test_conversation_followup_appends_to_history_not_reset(rag_manager):
+    # `messages` is mutated in place after each send(), so a Mock's recorded
+    # call_args would just be a live reference showing the FINAL state for
+    # every past call. Snapshot (copy) each call's argument at call-time
+    # instead, to actually prove what the router saw on each individual call.
+    seen_per_call: list[list[dict[str, str]]] = []
+
+    async def fake_chat(messages, system=""):
+        seen_per_call.append(list(messages))
+        return "Great explanation!"
+
+    rag_manager._router.chat = AsyncMock(side_effect=fake_chat)
+
+    conversation = rag_manager.start_conversation("Target.", "Attempt.")
+    await conversation.send()
+    await conversation.send("Why is that wrong?")
+
+    assert len(conversation.messages) == 4
+    assert conversation.messages[2] == {"role": "user", "content": "Why is that wrong?"}
+
+    # First call: just the seeded prompt (1 turn).
+    assert len(seen_per_call[0]) == 1
+    # Second call: the ENTIRE history so far (seed + first answer + new
+    # question) — that's the whole point of conversation memory, not just
+    # the new question in isolation.
+    assert len(seen_per_call[1]) == 3
+    assert seen_per_call[1][-1]["content"] == "Why is that wrong?"
+
+
+async def test_conversation_rolls_back_unanswered_turn_on_failure():
+    """If the router call fails, any newly-appended user question must be
+    rolled back — otherwise the history is left with two consecutive user
+    turns and no reply between them, which strict providers (Anthropic)
+    reject on the next attempt."""
+    store = NumpyVectorStore()
+    embedder = HashingEmbeddingProvider()
+    failing_router = AsyncMock()
+    failing_router.chat = AsyncMock(side_effect=RuntimeError("provider down"))
+    rag_manager = RAGManager(store, embedder, failing_router, min_similarity=0.0)
+
+    conversation = rag_manager.start_conversation("Target.", "Attempt.")
+    assert len(conversation.messages) == 1  # the seeded first turn
+
+    with pytest.raises(RuntimeError):
+        await conversation.send()  # no new text -> nothing to roll back
+    assert len(conversation.messages) == 1  # seed survives untouched
+
+    with pytest.raises(RuntimeError):
+        await conversation.send("a follow-up that will also fail")
+    # The follow-up text must not be left dangling in the history.
+    assert len(conversation.messages) == 1
+    assert not any(m["content"] == "a follow-up that will also fail" for m in conversation.messages)

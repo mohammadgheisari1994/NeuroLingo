@@ -23,7 +23,7 @@ from logger_config import get_logger, setup_logging
 from neurolingo.core.llm.base import LLMConfig, ProviderError
 from neurolingo.core.llm.router import LLMRouter
 from neurolingo.core.rag.embeddings import HashingEmbeddingProvider
-from neurolingo.core.rag.rag_manager import RAGManager
+from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation
 from neurolingo.core.rag.vectorstore import NumpyVectorStore
 from neurolingo.core.srs.algorithm import (
     GRADE_AGAIN,
@@ -137,6 +137,7 @@ class NeuroLingoApp:
         self._current_sentence: Sentence | None = None
         self._show_translation = False
         self._advance_task: asyncio.Task | None = None
+        self._tutor_conversation: TutorConversation | None = None
         self._setup_page()
         self._build_ui()
         self._refresh_dashboard()
@@ -488,19 +489,35 @@ class NeuroLingoApp:
             visible=False,
         )
         self._tutor_loading = ft.ProgressRing(width=16, height=16, visible=False)
-        self._tutor_response_text = ft.Text("", size=13, color=ft.Colors.INDIGO_200)
-        self._tutor_response = ft.Container(
-            content=self._tutor_response_text,
-            bgcolor=_SURFACE,
+
+        # Conversation transcript — grows with each turn (initial answer +
+        # any follow-ups), instead of a single static response block.
+        self._tutor_transcript = ft.Column(spacing=8, visible=False)
+
+        self._tutor_followup_input = ft.TextField(
+            hint_text="Ask a follow-up (e.g. \"why?\")...",
             border_radius=10,
-            padding=_pad_all(12),
+            filled=True,
+            bgcolor=_SURFACE,
+            expand=True,
+            on_submit=self._ask_tutor_followup,
+        )
+        self._tutor_followup_btn = ft.IconButton(
+            icon=ft.Icons.SEND_ROUNDED,
+            icon_color=_ACCENT,
+            on_click=self._ask_tutor_followup,
+        )
+        self._tutor_followup_row = ft.Row(
+            [self._tutor_followup_input, self._tutor_followup_btn],
             visible=False,
         )
+
         self._tutor_section = ft.Column(
             [
                 self._tutor_input,
                 ft.Row([self._tutor_ask_btn, self._tutor_loading], spacing=12),
-                self._tutor_response,
+                self._tutor_transcript,
+                self._tutor_followup_row,
             ],
             spacing=8,
         )
@@ -557,7 +574,11 @@ class NeuroLingoApp:
         self._tutor_input.visible = False
         self._tutor_ask_btn.visible = False
         self._tutor_loading.visible = False
-        self._tutor_response.visible = False
+        self._tutor_transcript.controls.clear()
+        self._tutor_transcript.visible = False
+        self._tutor_followup_input.value = ""
+        self._tutor_followup_row.visible = False
+        self._tutor_conversation = None
 
         # Prefer overdue → then new
         due = self.repo.get_due_cards(limit=1)
@@ -598,10 +619,37 @@ class NeuroLingoApp:
         self._tutor_ask_btn.visible = True
         self.page.update()
 
+    def _tutor_turn_widget(self, role: str, text: str) -> ft.Container:
+        is_user = role == "user"
+        return ft.Container(
+            content=ft.Column(
+                [
+                    ft.Text(
+                        "You" if is_user else "AI Tutor",
+                        size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE54,
+                    ),
+                    ft.Text(
+                        text, size=13,
+                        color=ft.Colors.WHITE70 if is_user else ft.Colors.INDIGO_200,
+                    ),
+                ],
+                spacing=2,
+            ),
+            bgcolor=_SURFACE,
+            border_radius=10,
+            padding=_pad_all(10),
+        )
+
+    _TUTOR_UNAVAILABLE_MESSAGE = (
+        "AI tutor isn't available right now — add an API key "
+        "(ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY) or a "
+        "local GGUF model (LOCAL_MODEL_PATH) to your .env file."
+    )
+
     async def _ask_tutor(self, _e=None) -> None:
-        """Send the current sentence (+ the student's own attempt, if any) to
-        the AI tutor via RAGManager.tutor_analyze_mistake() and show the
-        neuroscience-informed explanation it returns."""
+        """Start a follow-up-capable AI tutor conversation for the current
+        sentence (+ the student's own attempt, if any) via
+        RAGManager.start_conversation(), and show its first response."""
         if not self._current_sentence:
             return
 
@@ -611,28 +659,57 @@ class NeuroLingoApp:
 
         self._tutor_ask_btn.disabled = True
         self._tutor_loading.visible = True
-        self._tutor_response.visible = False
         self.page.update()
 
         try:
-            explanation = await self.rag.tutor_analyze_mistake(
+            self._tutor_conversation = self.rag.start_conversation(
                 target_sentence=self._current_sentence.sentence_en,
                 user_input=attempt,
             )
-            self._tutor_response_text.value = explanation
-            self._tutor_response_text.color = ft.Colors.INDIGO_200
+            response = await self._tutor_conversation.send()
+            self._tutor_transcript.controls.append(self._tutor_turn_widget("user", attempt))
+            self._tutor_transcript.controls.append(self._tutor_turn_widget("assistant", response))
+            self._tutor_input.visible = False
+            self._tutor_ask_btn.visible = False
+            self._tutor_followup_row.visible = True
         except ProviderError as exc:
             _log.warning("AI tutor unavailable: %s", exc)
-            self._tutor_response_text.value = (
-                "AI tutor isn't available right now — add an API key "
-                "(ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY) or a "
-                "local GGUF model (LOCAL_MODEL_PATH) to your .env file."
+            self._tutor_transcript.controls.append(
+                self._tutor_turn_widget("assistant", self._TUTOR_UNAVAILABLE_MESSAGE)
             )
-            self._tutor_response_text.color = ft.Colors.ORANGE_300
+            self._tutor_conversation = None
         finally:
             self._tutor_ask_btn.disabled = False
             self._tutor_loading.visible = False
-            self._tutor_response.visible = True
+            self._tutor_transcript.visible = True
+            self.page.update()
+
+    async def _ask_tutor_followup(self, _e=None) -> None:
+        """Continue the existing AI tutor conversation with one more
+        student question, keeping the full prior history via
+        TutorConversation.send()."""
+        if not self._tutor_conversation:
+            return
+
+        question = (self._tutor_followup_input.value or "").strip()
+        if not question:
+            return
+
+        self._tutor_followup_input.value = ""
+        self._tutor_followup_btn.disabled = True
+        self.page.update()
+
+        try:
+            response = await self._tutor_conversation.send(question)
+            self._tutor_transcript.controls.append(self._tutor_turn_widget("user", question))
+            self._tutor_transcript.controls.append(self._tutor_turn_widget("assistant", response))
+        except ProviderError as exc:
+            _log.warning("AI tutor follow-up unavailable: %s", exc)
+            self._tutor_transcript.controls.append(
+                self._tutor_turn_widget("assistant", self._TUTOR_UNAVAILABLE_MESSAGE)
+            )
+        finally:
+            self._tutor_followup_btn.disabled = False
             self.page.update()
 
     def _submit_grade(self, grade: int) -> None:
