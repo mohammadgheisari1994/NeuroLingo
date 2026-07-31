@@ -1,0 +1,7 @@
+# Lightweight CI subset — no heavy ML/audio packages needed for unit tests
+numpy>=1.26.0
+python-dotenv>=1.0.0
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+pytest-cov>=5.0.0
+ruff>=0.5.0

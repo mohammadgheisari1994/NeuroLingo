@@ -1,0 +1,26 @@
+[project]
+name = "neurolingo"
+version = "0.1.0"
+description = "Scientifically-backed, AI-powered language learning app"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".git", "__pycache__", "dist", "build", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["neurolingo", "logger_config"]
+omit = ["tests/*", "*/__init__.py"]

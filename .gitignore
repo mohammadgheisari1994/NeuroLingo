@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs
+logs/*.log
+logs/*.log.*
+
+# Local data
+data/*.db
+data/*.sqlite
+
+# ML model caches
+.cache/
+models/
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Testing
+.coverage
+coverage.xml
+.pytest_cache/
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local tooling config (not project config)
+.claude/

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Lint + Test (all platforms) ──────────────────────────────────────────────
+  lint-and-test:
+    name: "${{ matrix.os }} / Python ${{ matrix.python-version }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install CI dependencies
+        run: pip install -r requirements-ci.txt
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Run unit tests
+        run: pytest tests/unit/ --cov=neurolingo --cov=logger_config --cov-report=xml
+
+      - name: Upload coverage (Ubuntu + 3.12 only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+
+  # ── Binary Artefacts (main branch only) ──────────────────────────────────────
+  build-artifacts:
+    name: "Build ${{ matrix.os }}"
+    if: github.ref == 'refs/heads/main'
+    needs: lint-and-test
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: neurolingo-windows
+            build-cmd: pyinstaller --onefile --windowed --name neurolingo main.py
+          - os: macos-latest
+            artifact-name: neurolingo-macos
+            build-cmd: pyinstaller --onefile --windowed --name neurolingo main.py
+          - os: ubuntu-latest
+            artifact-name: neurolingo-linux
+            build-cmd: pyinstaller --onefile --name neurolingo main.py
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install full dependencies + PyInstaller
+        # Heavy ML packages (faiss, sentence-transformers, llama-cpp-python) are
+        # excluded here; add them once those modules are implemented.
+        run: pip install flet python-dotenv pyinstaller
+
+      - name: Build binary
+        run: ${{ matrix.build-cmd }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: dist/
+          retention-days: 14
