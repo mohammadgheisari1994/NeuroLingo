@@ -194,6 +194,16 @@ class DatabaseRepository:
             _log.exception("get_sentence failed | id=%d", sentence_id)
             raise
 
+    def count_sentences(self) -> int:
+        """Return the total number of sentences stored, regardless of card status."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute("SELECT COUNT(*) AS n FROM sentences").fetchone()
+            return int(row["n"])
+        except Exception:
+            _log.exception("count_sentences failed")
+            raise
+
     def delete_sentence(self, sentence_id: int) -> None:
         """
         Delete a sentence.  Cards and review_log entries are removed
