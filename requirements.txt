@@ -8,7 +8,7 @@ flet>=0.21.0
 # pure-NumPy vector store) — see that module's docstrings for the rationale.
 
 # ── LLM Cloud Providers ──────────────────────────────────────────────────────
-openai>=1.40.0
+openai>=2.49.0
 anthropic>=0.120.0
 google-genai>=1.0.0
 
