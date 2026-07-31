@@ -16,7 +16,11 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from neurolingo.core.rag.embeddings import HashingEmbeddingProvider
+from neurolingo.core.rag.embeddings import (
+    APIEmbeddingProvider,
+    HashingEmbeddingProvider,
+    build_embedding_provider,
+)
 from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation, _build_tutor_prompt
 from neurolingo.core.rag.vectorstore import NumpyVectorStore
 
@@ -184,6 +188,47 @@ def test_persisted_json_is_human_readable(tmp_path):
     assert "hello world" in meta["texts"]
 
 
+# ── NumpyVectorStore — vector_dim / clear (embedding-provider switching) ──────
+
+def test_vector_dim_is_none_when_empty(store):
+    assert store.vector_dim is None
+
+
+def test_vector_dim_reflects_stored_vectors(store):
+    store.add(np.ones(7, dtype=np.float32), "doc")
+    assert store.vector_dim == 7
+
+
+def test_clear_empties_an_in_memory_store(store):
+    store.add(np.ones(4, dtype=np.float32), "doc")
+    store.clear()
+    assert len(store) == 0
+    assert store.vector_dim is None
+
+
+def test_clear_deletes_persisted_files(tmp_path):
+    path = tmp_path / "idx"
+    store = NumpyVectorStore(persist_path=path)
+    store.add(np.ones(4, dtype=np.float32), "doc")
+    assert path.with_suffix(".npy").exists()
+
+    store.clear()
+
+    assert not path.with_suffix(".npy").exists()
+    assert not path.with_suffix(".json").exists()
+
+
+def test_clear_then_reload_from_disk_stays_empty(tmp_path):
+    """A cleared+persisted store must not resurrect old vectors on reload."""
+    path = tmp_path / "idx"
+    store = NumpyVectorStore(persist_path=path)
+    store.add(np.ones(4, dtype=np.float32), "doc")
+    store.clear()
+
+    reloaded = NumpyVectorStore(persist_path=path)
+    assert len(reloaded) == 0
+
+
 # ── HashingEmbeddingProvider ──────────────────────────────────────────────────
 
 def test_embed_returns_correct_dimension(embedder):
@@ -240,6 +285,28 @@ def test_embed_batch_matches_individual_embeds(embedder):
     batch = embedder.embed_batch(texts)
     for i, t in enumerate(texts):
         np.testing.assert_array_almost_equal(batch[i], embedder.embed(t))
+
+
+# ── build_embedding_provider (cloud-then-offline factory) ─────────────────────
+
+def test_build_embedding_provider_uses_hashing_when_no_key():
+    provider = build_embedding_provider(openai_api_key="")
+    assert isinstance(provider, HashingEmbeddingProvider)
+
+
+def test_build_embedding_provider_uses_hashing_when_openai_package_missing(monkeypatch):
+    import neurolingo.core.rag.embeddings as embeddings_module
+    monkeypatch.setattr(embeddings_module, "_OPENAI_AVAILABLE", False)
+    provider = build_embedding_provider(openai_api_key="sk-not-actually-checked")
+    assert isinstance(provider, HashingEmbeddingProvider)
+
+
+def test_build_embedding_provider_uses_api_provider_when_key_present(monkeypatch):
+    import neurolingo.core.rag.embeddings as embeddings_module
+    monkeypatch.setattr(embeddings_module, "_OPENAI_AVAILABLE", True)
+    provider = build_embedding_provider(openai_api_key="sk-fake-key-for-test")
+    assert isinstance(provider, APIEmbeddingProvider)
+    assert provider.dim == 1536
 
 
 # ── RAGManager ────────────────────────────────────────────────────────────────

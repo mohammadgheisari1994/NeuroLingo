@@ -22,7 +22,8 @@ import flet as ft
 from logger_config import get_logger, setup_logging
 from neurolingo.core.llm.base import LLMConfig, ProviderError
 from neurolingo.core.llm.router import LLMRouter
-from neurolingo.core.rag.embeddings import HashingEmbeddingProvider
+from neurolingo.core.rag.base import EmbeddingProvider
+from neurolingo.core.rag.embeddings import build_embedding_provider
 from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation
 from neurolingo.core.rag.vectorstore import NumpyVectorStore
 from neurolingo.core.srs.algorithm import (
@@ -97,6 +98,29 @@ def _seed_knowledge(rag: RAGManager) -> None:
     for en, _fa, notes in _SAMPLES:
         rag.add_knowledge(f"{en} — {notes}", metadata={"source": "seed"})
     _log.info("Indexed %d grammar notes into the knowledge base", len(_SAMPLES))
+
+
+def _prepare_vector_store(path: Path, embedder: EmbeddingProvider) -> NumpyVectorStore:
+    """
+    Load the persisted knowledge base, discarding it if its vectors don't
+    match the current embedder's dimension.
+
+    This matters because which embedder we get is dynamic (build_embedding_
+    provider() upgrades to cloud embeddings when a key is configured) — a
+    store persisted under HashingEmbeddingProvider (e.g. 4096-dim) can't be
+    compared against a query embedded with APIEmbeddingProvider (1536-dim),
+    so switching providers must re-seed rather than crash on a shape
+    mismatch the first time someone searches it.
+    """
+    store = NumpyVectorStore(persist_path=path)
+    if store.vector_dim is not None and store.vector_dim != embedder.dim:
+        _log.warning(
+            "Knowledge base embedding dimension changed (%d -> %d) — "
+            "clearing and re-seeding",
+            store.vector_dim, embedder.dim,
+        )
+        store.clear()
+    return store
 
 
 # ── Colour palette ────────────────────────────────────────────────────────────
@@ -889,11 +913,23 @@ def main(page: ft.Page) -> None:
         repo.create_schema()
         _seed(repo)
 
-        router = LLMRouter(LLMConfig.from_env())
-        store = NumpyVectorStore(persist_path=VECTOR_STORE_PATH)
-        rag = RAGManager(store, HashingEmbeddingProvider(), router)
+        config = LLMConfig.from_env()
+        router = LLMRouter(config)
+        embedder = build_embedding_provider(config.openai_api_key)
+        store = _prepare_vector_store(VECTOR_STORE_PATH, embedder)
+        rag = RAGManager(store, embedder, router)
         if len(store) == 0:
-            _seed_knowledge(rag)
+            try:
+                _seed_knowledge(rag)
+            except Exception:
+                # A cloud embedder can fail here (unreachable/invalid key) in
+                # a way HashingEmbeddingProvider never could (pure local
+                # computation) — don't let that take down the whole app, just
+                # the tutor's grounding context for this session.
+                _log.exception(
+                    "Knowledge base seeding failed — AI tutor will have no "
+                    "grounding context this session"
+                )
 
         NeuroLingoApp(page, repo, rag)
         _log.info("NeuroLingo started successfully")
