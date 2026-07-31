@@ -13,6 +13,8 @@ remain generic and reusable.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from logger_config import get_logger
 from neurolingo.core.llm.router import LLMRouter
 from neurolingo.core.rag.base import EmbeddingProvider, VectorStore
@@ -50,6 +52,42 @@ def _build_tutor_prompt(
         f"{context_block}\n\n"
         "Please analyse the student's mistake and explain how to correct it."
     )
+
+
+# ── Multi-turn follow-ups ─────────────────────────────────────────────────────
+
+@dataclass
+class TutorConversation:
+    """
+    An ongoing, RAG-grounded dialogue about one target sentence.
+
+    Created via RAGManager.start_conversation(), which seeds `messages` with
+    the same retrieved-context prompt tutor_analyze_mistake() uses for its
+    one-shot answer. Call send() with no argument to run that seeded first
+    turn, then send(text) again for each follow-up the student asks — the
+    full history (and the original RAG context, baked into the first turn)
+    rides along via LLMRouter.chat() every time.
+    """
+
+    router: LLMRouter
+    system_prompt: str
+    messages: list[dict[str, str]] = field(default_factory=list)
+
+    async def send(self, text: str | None = None) -> str:
+        if text:
+            self.messages.append({"role": "user", "content": text})
+        try:
+            response = await self.router.chat(self.messages, system=self.system_prompt)
+        except Exception:
+            # Roll back the just-added, unanswered user turn on failure so the
+            # history stays strictly user/assistant-alternating for the next
+            # attempt — some providers (e.g. Anthropic) reject a request
+            # where two user turns appear back-to-back with no reply between.
+            if text:
+                self.messages.pop()
+            raise
+        self.messages.append({"role": "assistant", "content": response})
+        return response
 
 
 # ── Manager ───────────────────────────────────────────────────────────────────
@@ -121,19 +159,45 @@ class RAGManager:
         Returns:
             A short, contextualised correction explanation from the LLM.
         """
+        prompt, num_contexts = self._build_seed_prompt(target_sentence, user_input)
+        _log.info(
+            "tutor_analyze_mistake | target=%.50s | contexts=%d",
+            target_sentence, num_contexts,
+        )
+        return await self._router.generate_explanation(prompt, system=_TUTOR_SYSTEM_PROMPT)
+
+    def start_conversation(self, target_sentence: str, user_input: str) -> TutorConversation:
+        """
+        Seed a follow-up-capable AI tutor conversation, grounded in the same
+        retrieved context tutor_analyze_mistake() uses for its one-shot
+        answer.
+
+        Call TutorConversation.send() with no argument to get the first
+        response, then send(text) again for each follow-up the student asks
+        (e.g. "why?", "give me another example") — unlike
+        tutor_analyze_mistake(), the conversation remembers everything said
+        so far.
+        """
+        prompt, num_contexts = self._build_seed_prompt(target_sentence, user_input)
+        _log.info(
+            "start_conversation | target=%.50s | contexts=%d",
+            target_sentence, num_contexts,
+        )
+        return TutorConversation(
+            router=self._router,
+            system_prompt=_TUTOR_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+    def _build_seed_prompt(self, target_sentence: str, user_input: str) -> tuple[str, int]:
+        """Retrieve context and build the first-turn prompt shared by both
+        tutor_analyze_mistake() and start_conversation(). Returns
+        (prompt, number_of_contexts_retrieved)."""
         query = f"{target_sentence} {user_input}"
         contexts = self.retrieve(query)
-
         rag_context = "\n\n".join(
             f"[Context {i + 1}] {c['text']}"
             for i, c in enumerate(contexts)
         )
-
         prompt = _build_tutor_prompt(target_sentence, user_input, rag_context)
-
-        _log.info(
-            "tutor_analyze_mistake | target=%.50s | contexts=%d",
-            target_sentence, len(contexts),
-        )
-
-        return await self._router.generate_explanation(prompt, system=_TUTOR_SYSTEM_PROMPT)
+        return prompt, len(contexts)
