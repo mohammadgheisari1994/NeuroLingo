@@ -1,5 +1,7 @@
 # NeuroLingo
 
+[![CI](https://github.com/mohammadgheisari1994/NeuroLingo/actions/workflows/ci.yml/badge.svg)](https://github.com/mohammadgheisari1994/NeuroLingo/actions/workflows/ci.yml)
+
 A cross-platform, offline-capable English learning app for Farsi speakers — built on
 spaced repetition, sentence-context vocabulary, and a provider-agnostic LLM tutor that
 keeps working even with no internet connection and no API key.

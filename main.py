@@ -167,7 +167,7 @@ class NeuroLingoApp:
             actions=[
                 ft.IconButton(
                     ft.Icons.INFO_OUTLINE,
-                    tooltip="127 tests passing · flet 0.85",
+                    tooltip="Hebbian chunking · SM-2 spaced repetition · offline-first AI tutor",
                     icon_color=_ACCENT,
                 )
             ],
