@@ -20,6 +20,7 @@ data/*.db
 data/*.sqlite
 data/*.npy
 data/knowledge.json
+data/settings.json
 
 # ML model caches
 .cache/

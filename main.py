@@ -21,6 +21,12 @@ import flet as ft
 
 from logger_config import get_logger, setup_logging
 from neurolingo.core.llm.base import LLMConfig, ProviderError
+from neurolingo.core.llm.providers import (
+    AnthropicProvider,
+    GeminiProvider,
+    LocalLlamaProvider,
+    OpenAIProvider,
+)
 from neurolingo.core.llm.router import LLMRouter
 from neurolingo.core.rag.base import EmbeddingProvider
 from neurolingo.core.rag.embeddings import build_embedding_provider
@@ -41,6 +47,7 @@ _log = get_logger(__name__)
 
 DB_PATH = Path("data/neurolingo.db")
 VECTOR_STORE_PATH = Path("data/knowledge")
+SETTINGS_PATH = Path("data/settings.json")
 
 # ── Sample sentences loaded on first run ──────────────────────────────────────
 
@@ -169,10 +176,13 @@ class NeuroLingoApp:
     TAB_REVIEW = 1
     TAB_ADD = 2
 
-    def __init__(self, page: ft.Page, repo: DatabaseRepository, rag: RAGManager) -> None:
+    def __init__(
+        self, page: ft.Page, repo: DatabaseRepository, rag: RAGManager, settings_path: Path,
+    ) -> None:
         self.page = page
         self.repo = repo
         self.rag = rag
+        self.settings_path = settings_path
         self._tab = self.TAB_HOME
         self._current_card: Card | None = None
         self._current_sentence: Sentence | None = None
@@ -208,17 +218,21 @@ class NeuroLingoApp:
             bgcolor=ft.Colors.GREY_900,
             actions=[
                 ft.IconButton(
-                    ft.Icons.INFO_OUTLINE,
-                    tooltip="Hebbian chunking · SM-2 spaced repetition · offline-first AI tutor",
+                    ft.Icons.SETTINGS_OUTLINED,
+                    tooltip="Settings — AI provider API keys",
                     icon_color=_ACCENT,
+                    on_click=self._go_to_settings,
                 )
             ],
         )
 
-        # ── Content panels (one per tab) ──
+        # ── Content panels (one per tab, plus Settings which isn't in the
+        # bottom nav — it's reached via the AppBar gear icon and returns to
+        # whichever tab was active before) ──
         self._home_panel = self._build_home_panel()
         self._review_panel = self._build_review_panel()
         self._add_panel = self._build_add_panel()
+        self._settings_panel = self._build_settings_panel()
 
         self._content_switcher = ft.AnimatedSwitcher(
             content=self._home_panel,
@@ -959,6 +973,148 @@ class NeuroLingoApp:
         self._save_status.color = _EASY
         self.page.update()
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # SETTINGS (reached via the AppBar gear icon, not a bottom-nav tab)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _build_settings_panel(self) -> ft.Column:
+        def _field(label: str, *, password: bool = False, hint: str = "") -> ft.TextField:
+            return ft.TextField(
+                label=label,
+                hint_text=hint,
+                password=password,
+                can_reveal_password=password,
+                border_radius=10,
+                filled=True,
+                bgcolor=_SURFACE,
+            )
+
+        self._settings_preferred = ft.Dropdown(
+            label="Preferred provider",
+            options=[
+                ft.dropdown.Option("anthropic", "Anthropic"),
+                ft.dropdown.Option("openai", "OpenAI"),
+                ft.dropdown.Option("gemini", "Gemini"),
+                ft.dropdown.Option("local", "Local (llama.cpp)"),
+            ],
+            border_radius=10,
+            filled=True,
+            bgcolor=_SURFACE,
+        )
+        self._settings_anthropic_key = _field("Anthropic API key", password=True)
+        self._settings_openai_key = _field("OpenAI API key", password=True)
+        self._settings_gemini_key = _field("Gemini API key", password=True)
+        self._settings_local_model_path = _field(
+            "Local GGUF model path", hint="/path/to/model.gguf",
+        )
+
+        self._settings_save_status = ft.Text("", size=12)
+        self._settings_status_column = ft.Column(spacing=6)
+
+        save_btn = self._gradient_button(
+            "Save Settings", ft.Icons.SAVE_OUTLINED, self._save_settings,
+        )
+        back_btn = ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self._back_from_settings)
+
+        return ft.Column(
+            [
+                ft.Row(
+                    [back_btn, ft.Text("Settings", size=20, weight=ft.FontWeight.W_600)],
+                    spacing=4,
+                ),
+                ft.Text(
+                    "Keys are stored locally in data/settings.json — never uploaded "
+                    "anywhere by NeuroLingo itself. Changes take effect after restart.",
+                    size=12, color=ft.Colors.WHITE54,
+                ),
+                ft.Divider(height=16, color=ft.Colors.WHITE12),
+                self._settings_preferred,
+                self._settings_anthropic_key,
+                self._settings_openai_key,
+                self._settings_gemini_key,
+                self._settings_local_model_path,
+                ft.Container(height=8),
+                ft.Row([save_btn]),
+                self._settings_save_status,
+                ft.Container(height=16),
+                ft.Text("Provider status", size=14, weight=ft.FontWeight.W_600),
+                self._settings_status_column,
+            ],
+            spacing=12,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
+    def _load_settings_into_fields(self) -> None:
+        config = LLMConfig.from_file(self.settings_path)
+        self._settings_preferred.value = config.preferred_provider
+        self._settings_anthropic_key.value = config.anthropic_api_key
+        self._settings_openai_key.value = config.openai_api_key
+        self._settings_gemini_key.value = config.gemini_api_key
+        self._settings_local_model_path.value = config.local_model_path
+        self._settings_save_status.value = ""
+        self._refresh_settings_status(config)
+
+    def _refresh_settings_status(self, config: LLMConfig) -> None:
+        self._settings_status_column.controls.clear()
+        providers = [
+            ("Anthropic", AnthropicProvider(config)),
+            ("OpenAI", OpenAIProvider(config)),
+            ("Gemini", GeminiProvider(config)),
+            ("Local (llama.cpp)", LocalLlamaProvider(config)),
+        ]
+        for label, provider in providers:
+            available = provider.is_available()
+            self._settings_status_column.controls.append(
+                ft.Row(
+                    [
+                        ft.Icon(
+                            ft.Icons.CHECK_CIRCLE if available else ft.Icons.CANCEL_OUTLINED,
+                            color=_EASY if available else ft.Colors.WHITE30,
+                            size=16,
+                        ),
+                        ft.Text(label, size=13),
+                        ft.Text(
+                            "available" if available else "not configured",
+                            size=11, color=ft.Colors.WHITE54,
+                        ),
+                    ],
+                    spacing=8,
+                )
+            )
+
+    def _save_settings(self, _e=None) -> None:
+        config = LLMConfig(
+            preferred_provider=self._settings_preferred.value or "anthropic",
+            anthropic_api_key=(self._settings_anthropic_key.value or "").strip(),
+            openai_api_key=(self._settings_openai_key.value or "").strip(),
+            gemini_api_key=(self._settings_gemini_key.value or "").strip(),
+            local_model_path=(self._settings_local_model_path.value or "").strip(),
+        )
+        config.save_to_file(self.settings_path)
+        _log.info("Settings saved | preferred=%s", config.preferred_provider)
+
+        self._settings_save_status.value = (
+            "Saved — restart NeuroLingo for the AI tutor to use these settings."
+        )
+        self._settings_save_status.color = _EASY
+        self._refresh_settings_status(config)
+        self.page.update()
+
+    def _go_to_settings(self, _e=None) -> None:
+        self._load_settings_into_fields()
+        self._content_switcher.content = self._settings_panel
+        self.page.update()
+
+    def _back_from_settings(self, _e=None) -> None:
+        panels = {
+            self.TAB_HOME: self._home_panel,
+            self.TAB_REVIEW: self._review_panel,
+            self.TAB_ADD: self._add_panel,
+        }
+        self._content_switcher.content = panels[self._tab]
+        self.page.update()
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -968,7 +1124,7 @@ def main(page: ft.Page) -> None:
         repo.create_schema()
         _seed(repo)
 
-        config = LLMConfig.from_env()
+        config = LLMConfig.from_file(SETTINGS_PATH)
         router = LLMRouter(config)
         embedder = build_embedding_provider(config.openai_api_key)
         store = _prepare_vector_store(VECTOR_STORE_PATH, embedder)
@@ -986,7 +1142,7 @@ def main(page: ft.Page) -> None:
                     "grounding context this session"
                 )
 
-        NeuroLingoApp(page, repo, rag)
+        NeuroLingoApp(page, repo, rag, SETTINGS_PATH)
         _log.info("NeuroLingo started successfully")
     except Exception:
         _log.exception("Fatal error during startup")
