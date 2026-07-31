@@ -204,6 +204,16 @@ class DatabaseRepository:
             _log.exception("count_sentences failed")
             raise
 
+    def get_all_sentences(self) -> list[Sentence]:
+        """Return every sentence, oldest first — used for full data export."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute("SELECT * FROM sentences ORDER BY id ASC").fetchall()
+            return [_row_to_sentence(r) for r in rows]
+        except Exception:
+            _log.exception("get_all_sentences failed")
+            raise
+
     def delete_sentence(self, sentence_id: int) -> None:
         """
         Delete a sentence.  Cards and review_log entries are removed
@@ -259,6 +269,19 @@ class DatabaseRepository:
             return _row_to_card(row) if row else None
         except Exception:
             _log.exception("get_card failed | id=%d", card_id)
+            raise
+
+    def get_card_by_sentence_id(self, sentence_id: int) -> Card | None:
+        """Return the card linked to a sentence, or None if it has none yet
+        — used for full data export, where we walk sentences first."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM cards WHERE sentence_id = ? LIMIT 1", (sentence_id,)
+                ).fetchone()
+            return _row_to_card(row) if row else None
+        except Exception:
+            _log.exception("get_card_by_sentence_id failed | sentence_id=%d", sentence_id)
             raise
 
     def update_card(self, card: Card) -> None:
