@@ -6,9 +6,16 @@ imports exactly one thing and stays fully decoupled from every other provider.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
+
+from logger_config import get_logger
+
+_log = get_logger(__name__)
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
@@ -25,6 +32,15 @@ class ProviderUnavailableError(ProviderError):
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+
+_PERSISTED_FIELDS = (
+    "preferred_provider",
+    "openai_api_key",
+    "anthropic_api_key",
+    "gemini_api_key",
+    "local_model_path",
+)
+
 
 @dataclass
 class LLMConfig:
@@ -56,6 +72,38 @@ class LLMConfig:
             gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
             local_model_path=os.getenv("LOCAL_MODEL_PATH", ""),
         )
+
+    @classmethod
+    def from_file(cls, path: Path, *, env_fallback: "LLMConfig | None" = None) -> "LLMConfig":
+        """
+        Load user-editable settings (API keys, preferred provider, local
+        model path) from a local JSON file written by the Settings screen,
+        layered on top of from_env() defaults.
+
+        Editing a .env file isn't viable for a packaged end-user binary, so
+        the Settings UI needs somewhere else to persist to; this file is
+        that somewhere. If it doesn't exist or fails to parse, silently
+        fall back to environment defaults rather than crashing app startup
+        over a corrupted settings file.
+        """
+        base = env_fallback if env_fallback is not None else cls.from_env()
+        if not path.exists():
+            return base
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _log.warning("Could not read settings file %s; using environment defaults", path)
+            return base
+        overrides = {k: v for k, v in data.items() if k in _PERSISTED_FIELDS}
+        return dataclasses.replace(base, **overrides)
+
+    def save_to_file(self, path: Path) -> None:
+        """Persist the user-editable fields (only — not model names/tokens/
+        temperature, which aren't exposed in the Settings UI) to a local
+        JSON file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {name: getattr(self, name) for name in _PERSISTED_FIELDS}
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 # ── Abstract provider ─────────────────────────────────────────────────────────

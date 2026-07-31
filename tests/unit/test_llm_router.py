@@ -16,6 +16,7 @@ Coverage targets:
 """
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -249,6 +250,58 @@ def test_llm_config_defaults():
     assert config.preferred_provider == "anthropic"
     assert config.max_tokens == 512
     assert config.temperature == 0.7
+
+
+# ── LLMConfig.from_file() / save_to_file() (Settings screen persistence) ─────
+
+def test_from_file_missing_falls_back_to_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-fallback")
+    config = LLMConfig.from_file(tmp_path / "does-not-exist.json")
+    assert config.anthropic_api_key == "sk-env-fallback"
+
+
+def test_save_then_load_roundtrips_user_fields(tmp_path):
+    path = tmp_path / "settings.json"
+    original = LLMConfig(
+        preferred_provider="openai",
+        openai_api_key="sk-openai-test",
+        anthropic_api_key="sk-anthropic-test",
+        gemini_api_key="sk-gemini-test",
+        local_model_path="/models/phi-3.gguf",
+    )
+    original.save_to_file(path)
+
+    loaded = LLMConfig.from_file(path)
+
+    assert loaded.preferred_provider == "openai"
+    assert loaded.openai_api_key == "sk-openai-test"
+    assert loaded.anthropic_api_key == "sk-anthropic-test"
+    assert loaded.gemini_api_key == "sk-gemini-test"
+    assert loaded.local_model_path == "/models/phi-3.gguf"
+
+
+def test_from_file_does_not_persist_model_names_or_tuning(tmp_path):
+    """Only the 5 user-editable fields are persisted — model names, max_tokens,
+    and temperature aren't exposed in the Settings UI and shouldn't leak in."""
+    path = tmp_path / "settings.json"
+    LLMConfig(anthropic_model="custom-model", max_tokens=999).save_to_file(path)
+    saved = json.loads(path.read_text())
+    assert "anthropic_model" not in saved
+    assert "max_tokens" not in saved
+
+
+def test_from_file_ignores_unknown_keys(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"preferred_provider": "gemini", "not_a_real_field": "x"}))
+    config = LLMConfig.from_file(path)
+    assert config.preferred_provider == "gemini"
+
+
+def test_from_file_survives_corrupted_json(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{ not valid json !!")
+    config = LLMConfig.from_file(path)  # must not raise
+    assert config.preferred_provider == "anthropic"  # falls back to defaults
 
 
 # ── Builder ───────────────────────────────────────────────────────────────────
