@@ -323,8 +323,19 @@ class NeuroLingoApp:
 
         self._recent_list = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
 
+        hero_image = ft.Container(
+            content=ft.Image(
+                src="images/hero_learning.svg",
+                fit=ft.BoxFit.CONTAIN,
+                height=140,
+            ),
+            alignment=ft.alignment.Alignment(0, 0),
+            padding=_pad_sym(v=4),
+        )
+
         return ft.Column(
             [
+                hero_image,
                 ft.Text("Welcome back!", size=22, weight=ft.FontWeight.W_600),
                 ft.Text(
                     "Sentences reviewed in context — no isolated flashcards.",
