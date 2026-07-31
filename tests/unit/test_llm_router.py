@@ -55,6 +55,14 @@ def _router(providers, local=None) -> LLMRouter:
     return LLMRouter(providers=providers, local_provider=local)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_retry_delay(monkeypatch):
+    """Retries back off via asyncio.sleep; patch it so every test in this
+    file stays instant regardless of how many ProviderUnavailableError
+    retries it triggers, instead of only the tests that remember to."""
+    monkeypatch.setattr("neurolingo.core.llm.router.asyncio.sleep", AsyncMock())
+
+
 # ── Routing to preferred provider ─────────────────────────────────────────────
 
 async def test_calls_first_available_provider():
@@ -169,6 +177,61 @@ async def test_chat_falls_back_on_auth_error():
     router = _router([cloud], local=local)
     result = await router.chat([{"role": "user", "content": "hi"}])
     assert result == "local chat"
+
+
+# ── Retry with backoff on transient failures ──────────────────────────────────
+
+async def test_retries_transient_failure_then_succeeds():
+    """A provider that fails twice with ProviderUnavailableError then succeeds
+    on the third attempt should return that success WITHOUT falling over to
+    another provider — this is the whole point of the retry."""
+    flaky = _make_provider(
+        "Flaky",
+        side_effect=[
+            ProviderUnavailableError("timeout 1"),
+            ProviderUnavailableError("timeout 2"),
+            "recovered",
+        ],
+    )
+    other = _make_provider("Other", answer="should not be used")
+    router = _router([flaky, other])
+
+    result = await router.generate_explanation("x")
+
+    assert result == "recovered"
+    assert flaky.generate_explanation.call_count == 3
+    other.generate_explanation.assert_not_called()
+
+
+async def test_gives_up_after_max_retries_and_falls_over():
+    """More transient failures than the retry budget allows should still
+    exhaust the retries and then fall through to the next provider, exactly
+    like before retries existed — just with extra attempts first."""
+    always_flaky = _make_provider("AlwaysFlaky", side_effect=ProviderUnavailableError("down"))
+    other = _make_provider("Other", answer="fallback answer")
+    router = _router([always_flaky, other])
+
+    result = await router.generate_explanation("x")
+
+    assert result == "fallback answer"
+    # 1 initial attempt + _MAX_RETRIES (2) retries = 3 total calls
+    assert always_flaky.generate_explanation.call_count == 3
+
+
+async def test_auth_error_is_never_retried(monkeypatch):
+    """AuthenticationError must fail over immediately — retrying a bad key
+    wastes time and can trip provider rate limits for no benefit."""
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("neurolingo.core.llm.router.asyncio.sleep", sleep_mock)
+    bad_key = _make_provider("BadKey", side_effect=AuthenticationError("invalid key"))
+    local = _make_provider("Local", answer="local")
+    router = _router([bad_key], local=local)
+
+    result = await router.generate_explanation("x")
+
+    assert result == "local"
+    bad_key.generate_explanation.assert_called_once()
+    sleep_mock.assert_not_called()
 
 
 # ── LLMConfig.from_env() ──────────────────────────────────────────────────────

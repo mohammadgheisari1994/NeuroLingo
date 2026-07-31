@@ -11,6 +11,8 @@ user's Developer Console shows exactly which provider answered each request.
 """
 from __future__ import annotations
 
+import asyncio
+
 from logger_config import get_logger
 from neurolingo.core.llm.base import (
     AuthenticationError,
@@ -29,6 +31,9 @@ from neurolingo.core.llm.providers import (
 _log = get_logger(__name__)
 
 _PROVIDER_ORDER = ["anthropic", "openai", "gemini"]
+
+_MAX_RETRIES = 2
+_RETRY_BASE_DELAY_SECONDS = 0.5
 
 
 class LLMRouter:
@@ -91,7 +96,7 @@ class LLMRouter:
 
             try:
                 _log.info("Routing request to %s | %s", provider.name, context)
-                result = await call(provider)
+                result = await self._call_with_retry(call, provider)
                 _log.debug("Response received from %s", provider.name)
                 return result
 
@@ -124,6 +129,35 @@ class LLMRouter:
             "No LLM provider is available. "
             "Configure an API key in Settings or install llama-cpp-python with a GGUF model."
         )
+
+    @staticmethod
+    async def _call_with_retry(call, provider: LLMProvider):
+        """
+        Retry a single provider call up to _MAX_RETRIES times, with
+        exponential backoff, when it fails with ProviderUnavailableError
+        (timeout / transient network error / rate limit) — real networks have
+        blips, and retrying once or twice before failing over means the
+        preferred provider actually gets used most of the time instead of
+        silently degrading.
+
+        AuthenticationError and generic ProviderError are never retried here:
+        retrying a bad API key (or an unknown failure) just wastes time
+        before falling through to the next provider in _route().
+        """
+        attempt = 0
+        while True:
+            try:
+                return await call(provider)
+            except ProviderUnavailableError:
+                attempt += 1
+                if attempt > _MAX_RETRIES:
+                    raise
+                delay = _RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+                _log.info(
+                    "%s transient failure, retrying (%d/%d) in %.1fs",
+                    provider.name, attempt, _MAX_RETRIES, delay,
+                )
+                await asyncio.sleep(delay)
 
     # ── Builder ───────────────────────────────────────────────────────────────
 
