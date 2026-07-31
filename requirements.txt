@@ -10,7 +10,7 @@ flet>=0.21.0
 # ── LLM Cloud Providers ──────────────────────────────────────────────────────
 openai>=1.40.0
 anthropic>=0.120.0
-google-generativeai>=0.8.0
+google-genai>=1.0.0
 
 # ── Local LLM (offline fallback) ─────────────────────────────────────────────
 # macOS Metal GPU : CMAKE_ARGS="-DLLAMA_METAL=on"   pip install llama-cpp-python
