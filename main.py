@@ -186,8 +186,8 @@ def _border_all(width: float, color: str) -> ft.Border:
 class NeuroLingoApp:
     """Stateful single-page application controller."""
 
-    TAB_HOME = 0
-    TAB_REVIEW = 1
+    TAB_TODAY = 0
+    TAB_LIBRARY = 1
     TAB_ADD = 2
 
     def __init__(
@@ -197,7 +197,7 @@ class NeuroLingoApp:
         self.repo = repo
         self.rag = rag
         self.settings_path = settings_path
-        self._tab = self.TAB_HOME
+        self._tab = self.TAB_TODAY
         self._current_card: Card | None = None
         self._current_sentence: Sentence | None = None
         self._show_translation = False
@@ -205,7 +205,7 @@ class NeuroLingoApp:
         self._tutor_conversation: TutorConversation | None = None
         self._setup_page()
         self._build_ui()
-        self._refresh_dashboard()
+        self._refresh_today()
 
     # ── Page configuration ────────────────────────────────────────────────────
 
@@ -225,6 +225,42 @@ class NeuroLingoApp:
         p.padding = 0
         p.bgcolor = _BG
 
+    # ── Icons ─────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _icon_image(svg_name: str, *, color: str, size: int = 22) -> ft.Image:
+        """Custom geometric icon (8-point star, leaning books, diamond+plus,
+        sliders) tinted via SRC_IN blend — replaces Material glyphs so the
+        nav bar reads as part of the same tile-work visual language."""
+        return ft.Image(
+            src=f"icons/{svg_name}.svg",
+            width=size, height=size,
+            color=color,
+            color_blend_mode=ft.BlendMode.SRC_IN,
+        )
+
+    @staticmethod
+    def _sunburst_gradient() -> ft.SweepGradient:
+        """Repeating conic 'sunburst' rays approximating the mockup's CSS
+        repeating-conic-gradient (no direct Flet equivalent) via explicit
+        alternating SweepGradient stops: each of the 15 segments is ~80%
+        transparent then a hard-edged sliver of faint gold, matching the
+        mockup's 20deg-transparent/5deg-gold 25deg period."""
+        segments = 15
+        transparent = ft.Colors.with_opacity(0.0, _ACCENT)
+        faint_gold = ft.Colors.with_opacity(0.05, _ACCENT)
+        colors: list[str] = []
+        stops: list[float] = []
+        for i in range(segments):
+            start = i / segments
+            edge = start + 0.8 / segments
+            end = (i + 1) / segments
+            stops.extend([start, edge, edge, end])
+            colors.extend([transparent, transparent, faint_gold, faint_gold])
+        stops[0] = 0.0
+        stops[-1] = 1.0
+        return ft.SweepGradient(colors=colors, stops=stops)
+
     # ── UI skeleton ───────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
@@ -237,58 +273,69 @@ class NeuroLingoApp:
             bgcolor=_BG,
             actions=[
                 ft.IconButton(
-                    ft.Icons.SETTINGS_OUTLINED,
+                    icon=self._icon_image("settings_sliders", color=_ACCENT, size=20),
                     tooltip="Settings — AI provider API keys",
-                    icon_color=_ACCENT,
                     on_click=self._go_to_settings,
                 )
             ],
         )
 
-        # ── Content panels (one per tab, plus Settings which isn't in the
-        # bottom nav — it's reached via the AppBar gear icon and returns to
-        # whichever tab was active before) ──
-        self._home_panel = self._build_home_panel()
+        # ── Content panels (one per tab, plus Review — reached from Today's
+        # "Continue Learning" button, not a tab itself — and Settings, reached
+        # via the AppBar gear icon; both return to whichever tab was active) ──
+        self._today_panel = self._build_today_panel()
+        self._library_panel = self._build_library_panel()
         self._review_panel = self._build_review_panel()
         self._add_panel = self._build_add_panel()
         self._settings_panel = self._build_settings_panel()
 
         self._content_switcher = ft.AnimatedSwitcher(
-            content=self._home_panel,
+            content=self._today_panel,
             transition=ft.AnimatedSwitcherTransition.FADE,
             duration=200,
             switch_in_curve=ft.AnimationCurve.EASE_OUT,
             switch_out_curve=ft.AnimationCurve.EASE_IN,
         )
+        # Tile-work background: a repeating conic "sunburst" (no direct CSS
+        # equivalent exists in Flet, so it's built from explicit alternating
+        # SweepGradient stops) plus a small tiled diagonal-crosshatch SVG,
+        # both behind the actual content — echoes the girih motif without
+        # touching text contrast.
+        textured_body = ft.Stack(
+            [
+                ft.Container(gradient=self._sunburst_gradient(), expand=True),
+                ft.Image(
+                    src="images/bg_pattern.svg", width=40, height=40,
+                    repeat=ft.ImageRepeat.REPEAT, fit=ft.BoxFit.NONE, expand=True,
+                ),
+                self._content_switcher,
+            ],
+            expand=True,
+        )
         self._body = ft.Container(
-            content=self._content_switcher,
+            content=textured_body,
             expand=True,
             padding=_pad_all(16),
         )
 
         # ── Bottom NavigationBar ──
+        def _nav_destination(svg_name: str, label: str) -> ft.NavigationBarDestination:
+            return ft.NavigationBarDestination(
+                icon=self._icon_image(svg_name, color=_INK_SOFT),
+                selected_icon=self._icon_image(svg_name, color=_ACCENT),
+                label=label,
+            )
+
         self.page.navigation_bar = ft.NavigationBar(
-            selected_index=self.TAB_HOME,
+            selected_index=self.TAB_TODAY,
             bgcolor=_SURFACE,
             indicator_color=ft.Colors.with_opacity(0.25, _ACCENT),
             shadow_color=ft.Colors.BLACK,
             elevation=8,
             destinations=[
-                ft.NavigationBarDestination(
-                    icon=ft.Icons.HOME_OUTLINED,
-                    selected_icon=ft.Icons.HOME,
-                    label="Home",
-                ),
-                ft.NavigationBarDestination(
-                    icon=ft.Icons.SCHOOL_OUTLINED,
-                    selected_icon=ft.Icons.SCHOOL,
-                    label="Review",
-                ),
-                ft.NavigationBarDestination(
-                    icon=ft.Icons.ADD_CIRCLE_OUTLINE,
-                    selected_icon=ft.Icons.ADD_CIRCLE,
-                    label="Add",
-                ),
+                _nav_destination("today", "Today"),
+                _nav_destination("library", "Library"),
+                _nav_destination("add_diamond", "Add"),
             ],
             on_change=self._on_tab_change,
         )
@@ -304,72 +351,139 @@ class NeuroLingoApp:
     def _on_tab_change(self, e: ft.ControlEvent) -> None:
         self._tab = int(e.data)
         panels = {
-            self.TAB_HOME: self._home_panel,
-            self.TAB_REVIEW: self._review_panel,
+            self.TAB_TODAY: self._today_panel,
+            self.TAB_LIBRARY: self._library_panel,
             self.TAB_ADD: self._add_panel,
         }
-        if self._tab == self.TAB_HOME:
-            self._refresh_dashboard()
-        elif self._tab == self.TAB_REVIEW:
-            self._load_next_card()
+        if self._tab == self.TAB_TODAY:
+            self._refresh_today()
+        elif self._tab == self.TAB_LIBRARY:
+            self._refresh_library()
         self._content_switcher.content = panels[self._tab]
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
-    # HOME tab
+    # TODAY tab — action-first: what's next, not a stats dashboard
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _build_home_panel(self) -> ft.Column:
-        self._stat_due = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=_ACCENT)
-        self._stat_new = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=_EASY)
-        self._stat_total = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=_INK_SOFT)
-
-        stats_row = ft.Row(
-            [
-                self._stat_card("Due", self._stat_due, ft.Icons.TIMER_OUTLINED, _ACCENT),
-                self._stat_card("New", self._stat_new, ft.Icons.FIBER_NEW_OUTLINED, _EASY),
-                self._stat_card("Total", self._stat_total, ft.Icons.LIBRARY_BOOKS_OUTLINED, _INK_SOFT),
-            ],
-            spacing=8,
-            alignment=ft.MainAxisAlignment.CENTER,
+    def _build_today_panel(self) -> ft.Column:
+        # Next-up preview — the actual next card, replacing a decorative
+        # illustration with the one thing this screen exists to tell you.
+        self._next_eyebrow = ft.Text("", size=10, color=_TURQUOISE, weight=ft.FontWeight.BOLD)
+        self._next_en = ft.Text(
+            "", size=14, weight=ft.FontWeight.W_600, color=_INK, font_family=_FONT_BODY_BOLD,
         )
-
-        self._start_btn = self._gradient_button(
-            "Start Review Session", ft.Icons.PLAY_ARROW_ROUNDED, self._go_to_review,
-        )
-
-        self._recent_list = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO)
-
-        hero_image = ft.Container(
-            content=ft.Image(
-                src="images/hero_learning.svg",
-                fit=ft.BoxFit.CONTAIN,
-                height=140,
+        self._next_fa = ft.Text("", size=12, color=_ACCENT, rtl=True)
+        self._next_card_preview = ft.Container(
+            content=ft.Column(
+                [
+                    self._next_eyebrow,
+                    ft.Container(height=6),
+                    self._next_en,
+                    ft.Container(height=4),
+                    self._next_fa,
+                ],
+                spacing=0,
             ),
-            alignment=ft.alignment.Alignment(0, 0),
-            padding=_pad_sym(v=4),
+            bgcolor=_SURFACE_RAISED,
+            border=_border_all(1, ft.Colors.with_opacity(0.3, _ACCENT)),
+            border_radius=16,
+            padding=_pad_all(16),
+        )
+
+        # Compact stats ribbon — context, not the headline anymore.
+        self._today_stat_due = ft.Text(
+            "—", size=17, weight=ft.FontWeight.BOLD, color=_ACCENT, font_family=_FONT_BODY_BOLD,
+        )
+        self._today_stat_new = ft.Text(
+            "—", size=17, weight=ft.FontWeight.BOLD, color=_TURQUOISE, font_family=_FONT_BODY_BOLD,
+        )
+        self._today_stat_total = ft.Text(
+            "—", size=17, weight=ft.FontWeight.BOLD, color=_INK_SOFT, font_family=_FONT_BODY_BOLD,
+        )
+        ribbon = ft.Container(
+            content=ft.Row(
+                [
+                    self._ribbon_cell("Due", self._today_stat_due),
+                    ft.VerticalDivider(width=1, color=_DIVIDER),
+                    self._ribbon_cell("New", self._today_stat_new),
+                    ft.VerticalDivider(width=1, color=_DIVIDER),
+                    self._ribbon_cell("Total", self._today_stat_total),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_EVENLY,
+            ),
+            bgcolor=_SURFACE,
+            border=_border_all(1, ft.Colors.with_opacity(0.18, _TURQUOISE)),
+            border_radius=12,
+            padding=_pad_sym(v=10),
+        )
+
+        self._continue_btn = self._gradient_button(
+            "Continue Learning", ft.Icons.PLAY_ARROW_ROUNDED, self._go_to_review,
+        )
+
+        self._up_next_list = ft.Column(spacing=6)
+
+        self._today_content = ft.Column(
+            [
+                self._next_card_preview,
+                ft.Container(height=14),
+                ribbon,
+                ft.Container(height=16),
+                ft.Row([self._continue_btn]),
+                ft.Container(height=20),
+                ft.Text("Up Next", size=13, color=_TURQUOISE, font_family=_FONT_DISPLAY),
+                ft.Divider(height=8, color=_DIVIDER),
+                self._up_next_list,
+            ],
+            spacing=4,
+        )
+
+        # Empty state — nothing at all to review yet (fresh install or every
+        # sentence deleted); this is where the hero illustration lives now.
+        self._today_empty_state = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Image(src="images/hero_learning.svg", fit=ft.BoxFit.CONTAIN, height=120),
+                    ft.Container(height=12),
+                    ft.Text(
+                        "Nothing to review yet", size=18, weight=ft.FontWeight.BOLD,
+                        color=_INK, text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Text(
+                        "Add your first sentence to start learning.",
+                        size=13, color=_INK_SOFT, text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Container(height=16),
+                    ft.FilledButton("Add a Sentence", icon=ft.Icons.ADD, on_click=self._go_to_add),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            visible=False,
+            padding=_pad_all(24),
         )
 
         return ft.Column(
             [
-                hero_image,
                 ft.Text("Welcome back!", size=22, color=_INK, font_family=_FONT_DISPLAY),
                 ft.Text(
                     "Sentences reviewed in context — no isolated flashcards.",
                     size=12, color=_INK_SOFT,
                 ),
                 ft.Divider(height=20, color=_DIVIDER),
-                stats_row,
-                ft.Container(height=16),
-                ft.Row([self._start_btn]),
-                ft.Container(height=20),
-                ft.Text("Your Sentences", size=16, color=_TURQUOISE, font_family=_FONT_DISPLAY),
-                ft.Divider(height=8, color=_DIVIDER),
-                self._recent_list,
+                self._today_content,
+                self._today_empty_state,
             ],
             spacing=8,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
+        )
+
+    def _ribbon_cell(self, label: str, value_widget: ft.Text) -> ft.Column:
+        return ft.Column(
+            [value_widget, ft.Text(label, size=9, color=_INK_SOFT)],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0,
         )
 
     def _gradient_button(self, label: str, icon, on_click) -> ft.Container:
@@ -426,60 +540,72 @@ class NeuroLingoApp:
             expand=True,
         )
 
-    def _refresh_dashboard(self) -> None:
+    def _refresh_today(self) -> None:
         due = self.repo.get_due_cards(limit=100)
         new = self.repo.get_new_cards(limit=100)
+        queue = due + new
 
-        due_count = len(due)
-        new_count = len(new)
+        self._today_stat_due.value = str(len(due))
+        self._today_stat_new.value = str(len(new))
+        self._today_stat_total.value = str(self.repo.count_sentences())
 
-        self._stat_due.value = str(due_count)
-        self._stat_new.value = str(new_count)
-        self._stat_total.value = str(self.repo.count_sentences())
+        if not queue:
+            self._today_content.visible = False
+            self._today_empty_state.visible = True
+            self.page.update()
+            return
 
-        # Populate recent sentence list
-        all_due = self.repo.get_due_cards(limit=20)
-        all_new = self.repo.get_new_cards(limit=20)
-        combined = all_due[:3] + all_new[:3]
+        self._today_content.visible = True
+        self._today_empty_state.visible = False
 
-        self._recent_list.controls.clear()
-        for card in combined[:6]:
+        next_card = queue[0]
+        next_sentence = self.repo.get_sentence(next_card.sentence_id)
+        if next_sentence:
+            if next_card.status == CardStatus.NEW.value:
+                self._next_eyebrow.value = "Next up · New"
+            else:
+                due_days = (datetime.now(timezone.utc) - next_card.next_review_date).days
+                self._next_eyebrow.value = (
+                    f"Next up · Due {due_days}d ago" if due_days > 0 else "Next up · Due now"
+                )
+            self._next_en.value = next_sentence.sentence_en
+            self._next_fa.value = next_sentence.sentence_fa
+
+        self._up_next_list.controls.clear()
+        for card in queue[1:3]:
             sentence = self.repo.get_sentence(card.sentence_id)
             if not sentence:
                 continue
-            self._recent_list.controls.append(
+            is_new = card.status == CardStatus.NEW.value
+            self._up_next_list.controls.append(
                 ft.Container(
-                    content=ft.Column(
+                    content=ft.Row(
                         [
-                            ft.Text(sentence.sentence_en, size=13, weight=ft.FontWeight.W_500),
-                            ft.Row([
-                                ft.Container(
-                                    content=ft.Text(
-                                        card.status.upper(), size=10,
-                                        weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
-                                    ),
-                                    bgcolor=self._status_color(card.status),
-                                    border_radius=999,
-                                    padding=_pad_sym(v=3, h=8),
+                            ft.Text(
+                                sentence.sentence_en, size=11, color=_INK, expand=True,
+                                max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            ft.Container(
+                                content=ft.Text(
+                                    "NEW" if is_new else "DUE", size=8,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=_ACCENT_ON if is_new else _INK,
                                 ),
-                                ft.Text(f"Interval: {card.interval}d", size=11, color=_INK_SOFT),
-                            ], spacing=8),
+                                bgcolor=_TURQUOISE if is_new else _ACCENT,
+                                border_radius=999,
+                                padding=_pad_sym(v=2, h=7),
+                            ),
                         ],
-                        spacing=4,
+                        spacing=8,
                     ),
                     bgcolor=_SURFACE,
-                    border_radius=12,
-                    border=_border_all(1, ft.Colors.with_opacity(0.16, _TURQUOISE)),
-                    padding=_pad_all(12),
+                    border_radius=8,
+                    padding=_pad_sym(v=8, h=10),
                 )
             )
-
-        if not combined:
-            self._recent_list.controls.append(
-                ft.Text(
-                    "No cards yet. Add a sentence to get started!",
-                    color=_INK_SOFT, size=13,
-                )
+        if not self._up_next_list.controls:
+            self._up_next_list.controls.append(
+                ft.Text("That's everything for now.", size=11, color=_INK_SOFT)
             )
 
         self.page.update()
@@ -493,10 +619,13 @@ class NeuroLingoApp:
         }.get(status, ft.Colors.GREY_700)
 
     def _go_to_review(self, _e=None) -> None:
-        self.page.navigation_bar.selected_index = self.TAB_REVIEW
-        self._tab = self.TAB_REVIEW
         self._load_next_card()
         self._content_switcher.content = self._review_panel
+        self.page.update()
+
+    def _back_from_review(self, _e=None) -> None:
+        self._content_switcher.content = self._today_panel
+        self._refresh_today()
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -692,6 +821,16 @@ class NeuroLingoApp:
 
         return ft.Column(
             [
+                ft.Row(
+                    [
+                        ft.IconButton(
+                            icon=ft.Icons.ARROW_BACK, icon_color=_INK,
+                            on_click=self._back_from_review,
+                        ),
+                        ft.Text("Review Session", size=16, color=_INK, font_family=_FONT_DISPLAY),
+                    ],
+                    spacing=4,
+                ),
                 ft.Row([self._progress_label], alignment=ft.MainAxisAlignment.CENTER),
                 self._progress_bar,
                 ft.Container(height=16),
@@ -921,6 +1060,124 @@ class NeuroLingoApp:
         self.page.navigation_bar.selected_index = self.TAB_ADD
         self._tab = self.TAB_ADD
         self._content_switcher.content = self._add_panel
+        self.page.update()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # LIBRARY tab — browse everything (search, full list, real stats)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _build_library_panel(self) -> ft.Column:
+        self._lib_subtitle = ft.Text("", size=12, color=_INK_SOFT)
+
+        self._lib_stat_due = ft.Text("—", size=24, weight=ft.FontWeight.BOLD, color=_ACCENT)
+        self._lib_stat_new = ft.Text("—", size=24, weight=ft.FontWeight.BOLD, color=_TURQUOISE)
+        self._lib_stat_graduated = ft.Text("—", size=24, weight=ft.FontWeight.BOLD, color=_EASY)
+        self._lib_stat_total = ft.Text("—", size=24, weight=ft.FontWeight.BOLD, color=_INK_SOFT)
+
+        stats_row = ft.Row(
+            [
+                self._stat_card("Due", self._lib_stat_due, ft.Icons.TIMER_OUTLINED, _ACCENT),
+                self._stat_card("New", self._lib_stat_new, ft.Icons.FIBER_NEW_OUTLINED, _TURQUOISE),
+                self._stat_card(
+                    "Grad.", self._lib_stat_graduated, ft.Icons.WORKSPACE_PREMIUM_OUTLINED, _EASY,
+                ),
+                self._stat_card("Total", self._lib_stat_total, ft.Icons.LIBRARY_BOOKS_OUTLINED, _INK_SOFT),
+            ],
+            spacing=6,
+        )
+
+        self._lib_search = ft.TextField(
+            hint_text="Search your sentences…",
+            prefix_icon=ft.Icons.SEARCH,
+            border_radius=10,
+            filled=True,
+            bgcolor=_SURFACE,
+            border_color=ft.Colors.with_opacity(0.25, _TURQUOISE),
+            focused_border_color=_ACCENT,
+            on_change=self._on_library_search,
+        )
+
+        self._lib_list = ft.Column(spacing=8)
+
+        return ft.Column(
+            [
+                ft.Text("Your Library", size=22, color=_INK, font_family=_FONT_DISPLAY),
+                self._lib_subtitle,
+                ft.Divider(height=20, color=_DIVIDER),
+                stats_row,
+                ft.Container(height=16),
+                self._lib_search,
+                ft.Container(height=8),
+                self._lib_list,
+            ],
+            spacing=8,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
+    def _on_library_search(self, _e=None) -> None:
+        self._refresh_library(self._lib_search.value or "")
+
+    def _refresh_library(self, query: str = "") -> None:
+        due_count = len(self.repo.get_due_cards(limit=1000))
+        new_count = len(self.repo.get_new_cards(limit=1000))
+        graduated_count = self.repo.count_cards_by_status(CardStatus.GRADUATED.value)
+        total = self.repo.count_sentences()
+
+        self._lib_stat_due.value = str(due_count)
+        self._lib_stat_new.value = str(new_count)
+        self._lib_stat_graduated.value = str(graduated_count)
+        self._lib_stat_total.value = str(total)
+        self._lib_subtitle.value = f"{total} sentence(s), reviewed in context"
+
+        query = query.strip()
+        sentences = self.repo.search_sentences(query) if query else self.repo.get_all_sentences()
+
+        self._lib_list.controls.clear()
+        for sentence in sentences:
+            card = self.repo.get_card_by_sentence_id(sentence.id)
+            status = card.status if card else CardStatus.NEW.value
+            interval_text = f"{card.interval}d" if card else "—"
+            self._lib_list.controls.append(
+                ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                sentence.sentence_en, size=13,
+                                weight=ft.FontWeight.W_500, color=_INK,
+                            ),
+                            ft.Row(
+                                [
+                                    ft.Container(
+                                        content=ft.Text(
+                                            status.upper(), size=10,
+                                            weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
+                                        ),
+                                        bgcolor=self._status_color(status),
+                                        border_radius=999,
+                                        padding=_pad_sym(v=3, h=8),
+                                    ),
+                                    ft.Text(f"Interval: {interval_text}", size=11, color=_INK_SOFT),
+                                ],
+                                spacing=8,
+                            ),
+                        ],
+                        spacing=4,
+                    ),
+                    bgcolor=_SURFACE,
+                    border_radius=12,
+                    border=_border_all(1, ft.Colors.with_opacity(0.16, _TURQUOISE)),
+                    padding=_pad_all(12),
+                )
+            )
+
+        if not sentences:
+            message = (
+                "No sentences match your search." if query
+                else "No sentences yet. Add one to get started!"
+            )
+            self._lib_list.controls.append(ft.Text(message, color=_INK_SOFT, size=13))
+
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1163,8 +1420,8 @@ class NeuroLingoApp:
 
     def _back_from_settings(self, _e=None) -> None:
         panels = {
-            self.TAB_HOME: self._home_panel,
-            self.TAB_REVIEW: self._review_panel,
+            self.TAB_TODAY: self._today_panel,
+            self.TAB_LIBRARY: self._library_panel,
             self.TAB_ADD: self._add_panel,
         }
         self._content_switcher.content = panels[self._tab]
