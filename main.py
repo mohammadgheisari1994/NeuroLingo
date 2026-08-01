@@ -132,17 +132,29 @@ def _prepare_vector_store(path: Path, embedder: EmbeddingProvider) -> NumpyVecto
     return store
 
 
-# ── Colour palette ────────────────────────────────────────────────────────────
-
+# ── Colour palette — "Persian Modern" ─────────────────────────────────────────
+# Grading colours (Again/Hard/Good/Easy) are semantic state, not brand accent —
+# they stay Material red/orange/blue/green regardless of theme.
 _AGAIN = ft.Colors.RED_400
 _HARD = ft.Colors.ORANGE_400
 _GOOD = ft.Colors.BLUE_400
 _EASY = ft.Colors.GREEN_400
-_SURFACE = ft.Colors.with_opacity(0.08, ft.Colors.WHITE)
-_SURFACE_RAISED = ft.Colors.with_opacity(0.14, ft.Colors.WHITE)
-_ACCENT = ft.Colors.INDIGO_300
-_ACCENT_DEEP = ft.Colors.INDIGO_600
-_BG = ft.Colors.GREY_900
+
+_BG = "#0F2C31"            # glazed-tile teal ground
+_SURFACE = "#163A40"       # card/tile surface
+_SURFACE_RAISED = "#1B454C"
+_INK = "#F6F1E4"           # warm ivory text
+_INK_SOFT = ft.Colors.with_opacity(0.66, "#F6F1E4")
+_INK_FAINT = ft.Colors.with_opacity(0.38, "#F6F1E4")
+_DIVIDER = ft.Colors.with_opacity(0.16, "#E4A93A")
+_ACCENT = "#E4A93A"        # gold — brand accent, CTAs, headline colour
+_ACCENT_DEEP = "#C98A26"   # deeper gold, gradient partner
+_ACCENT_ON = "#17282A"     # dark ink used as text ON the gold accent
+_TURQUOISE = "#37C6BE"     # secondary accent — section titles, sentence rules
+
+_FONT_DISPLAY = "Reem Kufi"
+_FONT_BODY = "Vazirmatn"
+_FONT_BODY_BOLD = "Vazirmatn Bold"
 
 _CARD_SHADOW = ft.BoxShadow(
     spread_radius=0,
@@ -200,8 +212,13 @@ class NeuroLingoApp:
     def _setup_page(self) -> None:
         p = self.page
         p.title = "NeuroLingo"
+        p.fonts = {
+            _FONT_BODY: "fonts/Vazirmatn-Regular.ttf",
+            _FONT_BODY_BOLD: "fonts/Vazirmatn-Bold.ttf",
+            _FONT_DISPLAY: "fonts/ReemKufi.ttf",
+        }
         p.theme_mode = ft.ThemeMode.DARK
-        p.theme = ft.Theme(color_scheme_seed=ft.Colors.INDIGO)
+        p.theme = ft.Theme(color_scheme_seed=ft.Colors.TEAL, font_family=_FONT_BODY)
         p.window.width = 480
         p.window.height = 860
         p.window.min_width = 380
@@ -215,9 +232,9 @@ class NeuroLingoApp:
         self._appbar = ft.AppBar(
             leading=ft.Icon(ft.Icons.PSYCHOLOGY, color=_ACCENT, size=28),
             leading_width=48,
-            title=ft.Text("NeuroLingo", weight=ft.FontWeight.BOLD, size=20),
+            title=ft.Text("NeuroLingo", size=20, color=_INK, font_family=_FONT_DISPLAY),
             center_title=False,
-            bgcolor=ft.Colors.GREY_900,
+            bgcolor=_BG,
             actions=[
                 ft.IconButton(
                     ft.Icons.SETTINGS_OUTLINED,
@@ -252,7 +269,7 @@ class NeuroLingoApp:
         # ── Bottom NavigationBar ──
         self.page.navigation_bar = ft.NavigationBar(
             selected_index=self.TAB_HOME,
-            bgcolor=ft.Colors.GREY_800,
+            bgcolor=_SURFACE,
             indicator_color=ft.Colors.with_opacity(0.25, _ACCENT),
             shadow_color=ft.Colors.BLACK,
             elevation=8,
@@ -305,13 +322,13 @@ class NeuroLingoApp:
     def _build_home_panel(self) -> ft.Column:
         self._stat_due = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=_ACCENT)
         self._stat_new = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=_EASY)
-        self._stat_total = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70)
+        self._stat_total = ft.Text("—", size=32, weight=ft.FontWeight.BOLD, color=_INK_SOFT)
 
         stats_row = ft.Row(
             [
                 self._stat_card("Due", self._stat_due, ft.Icons.TIMER_OUTLINED, _ACCENT),
                 self._stat_card("New", self._stat_new, ft.Icons.FIBER_NEW_OUTLINED, _EASY),
-                self._stat_card("Total", self._stat_total, ft.Icons.LIBRARY_BOOKS_OUTLINED, ft.Colors.WHITE54),
+                self._stat_card("Total", self._stat_total, ft.Icons.LIBRARY_BOOKS_OUTLINED, _INK_SOFT),
             ],
             spacing=8,
             alignment=ft.MainAxisAlignment.CENTER,
@@ -336,18 +353,18 @@ class NeuroLingoApp:
         return ft.Column(
             [
                 hero_image,
-                ft.Text("Welcome back!", size=22, weight=ft.FontWeight.W_600),
+                ft.Text("Welcome back!", size=22, color=_INK, font_family=_FONT_DISPLAY),
                 ft.Text(
                     "Sentences reviewed in context — no isolated flashcards.",
-                    size=12, color=ft.Colors.WHITE54,
+                    size=12, color=_INK_SOFT,
                 ),
-                ft.Divider(height=20, color=ft.Colors.WHITE12),
+                ft.Divider(height=20, color=_DIVIDER),
                 stats_row,
                 ft.Container(height=16),
                 ft.Row([self._start_btn]),
                 ft.Container(height=20),
-                ft.Text("Your Sentences", size=16, weight=ft.FontWeight.W_600),
-                ft.Divider(height=8, color=ft.Colors.WHITE12),
+                ft.Text("Your Sentences", size=16, color=_TURQUOISE, font_family=_FONT_DISPLAY),
+                ft.Divider(height=8, color=_DIVIDER),
                 self._recent_list,
             ],
             spacing=8,
@@ -362,8 +379,11 @@ class NeuroLingoApp:
         return ft.Container(
             content=ft.Row(
                 [
-                    ft.Icon(icon, color=ft.Colors.WHITE),
-                    ft.Text(label, color=ft.Colors.WHITE, weight=ft.FontWeight.W_600, size=15),
+                    ft.Icon(icon, color=_ACCENT_ON),
+                    ft.Text(
+                        label, color=_ACCENT_ON, weight=ft.FontWeight.W_600, size=15,
+                        font_family=_FONT_BODY_BOLD,
+                    ),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 spacing=8,
@@ -394,14 +414,14 @@ class NeuroLingoApp:
                     icon_badge,
                     ft.Container(height=6),
                     value_widget,
-                    ft.Text(label, size=11, color=ft.Colors.WHITE54),
+                    ft.Text(label, size=11, color=_INK_SOFT),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=2,
             ),
             bgcolor=_SURFACE,
             border_radius=16,
-            border=_border_all(1, ft.Colors.with_opacity(0.06, ft.Colors.WHITE)),
+            border=_border_all(1, ft.Colors.with_opacity(0.18, _TURQUOISE)),
             padding=_pad_sym(v=14, h=8),
             expand=True,
         )
@@ -442,14 +462,14 @@ class NeuroLingoApp:
                                     border_radius=999,
                                     padding=_pad_sym(v=3, h=8),
                                 ),
-                                ft.Text(f"Interval: {card.interval}d", size=11, color=ft.Colors.WHITE54),
+                                ft.Text(f"Interval: {card.interval}d", size=11, color=_INK_SOFT),
                             ], spacing=8),
                         ],
                         spacing=4,
                     ),
                     bgcolor=_SURFACE,
                     border_radius=12,
-                    border=_border_all(1, ft.Colors.with_opacity(0.05, ft.Colors.WHITE)),
+                    border=_border_all(1, ft.Colors.with_opacity(0.16, _TURQUOISE)),
                     padding=_pad_all(12),
                 )
             )
@@ -458,7 +478,7 @@ class NeuroLingoApp:
             self._recent_list.controls.append(
                 ft.Text(
                     "No cards yet. Add a sentence to get started!",
-                    color=ft.Colors.WHITE54, size=13,
+                    color=_INK_SOFT, size=13,
                 )
             )
 
@@ -468,7 +488,7 @@ class NeuroLingoApp:
         return {
             "new": ft.Colors.BLUE_700,
             "learning": ft.Colors.ORANGE_700,
-            "review": ft.Colors.INDIGO_600,
+            "review": _TURQUOISE,
             "graduated": ft.Colors.GREEN_700,
         }.get(status, ft.Colors.GREY_700)
 
@@ -485,7 +505,7 @@ class NeuroLingoApp:
 
     def _build_review_panel(self) -> ft.Column:
         self._progress_bar = ft.ProgressBar(value=0, bgcolor=_SURFACE, color=_ACCENT)
-        self._progress_label = ft.Text("0 reviewed this session", size=11, color=ft.Colors.WHITE54)
+        self._progress_label = ft.Text("0 reviewed this session", size=11, color=_INK_SOFT)
         self._session_count = 0
 
         # Card face — English sentence
@@ -494,12 +514,13 @@ class NeuroLingoApp:
             size=18,
             weight=ft.FontWeight.W_600,
             text_align=ft.TextAlign.CENTER,
-            color=ft.Colors.WHITE,
+            color=_INK,
+            font_family=_FONT_BODY_BOLD,
         )
         self._card_context = ft.Text(
             "",
             size=11,
-            color=ft.Colors.WHITE54,
+            color=_INK_SOFT,
             text_align=ft.TextAlign.CENTER,
             italic=True,
         )
@@ -507,7 +528,7 @@ class NeuroLingoApp:
         self._card_fa = ft.Text(
             "",
             size=15,
-            color=ft.Colors.INDIGO_200,
+            color=_ACCENT,
             text_align=ft.TextAlign.CENTER,
             visible=False,
         )
@@ -529,7 +550,7 @@ class NeuroLingoApp:
                     self._card_en,
                     ft.Container(height=12),
                     self._card_fa,
-                    ft.Divider(color=ft.Colors.WHITE12),
+                    ft.Divider(color=_DIVIDER),
                     self._card_context,
                     ft.Container(height=8),
                     self._reveal_btn,
@@ -539,7 +560,7 @@ class NeuroLingoApp:
             ),
             bgcolor=_SURFACE_RAISED,
             border_radius=18,
-            border=_border_all(1, ft.Colors.with_opacity(0.08, ft.Colors.WHITE)),
+            border=_border_all(1, ft.Colors.with_opacity(0.2, _TURQUOISE)),
             shadow=_CARD_SHADOW,
             padding=_pad_all(24),
         )
@@ -570,7 +591,7 @@ class NeuroLingoApp:
         )
 
         # Result banner (shown momentarily after grading)
-        self._result_text = ft.Text("", size=13, color=ft.Colors.WHITE)
+        self._result_text = ft.Text("", size=13, color=_INK)
         self._result_banner = ft.Container(
             content=ft.Row(
                 [
@@ -656,7 +677,7 @@ class NeuroLingoApp:
                     ),
                     ft.Text(
                         "No cards due right now.\nAdd new sentences to keep learning.",
-                        size=14, color=ft.Colors.WHITE54,
+                        size=14, color=_INK_SOFT,
                         text_align=ft.TextAlign.CENTER,
                     ),
                     ft.Container(height=24),
@@ -747,11 +768,11 @@ class NeuroLingoApp:
                 [
                     ft.Text(
                         "You" if is_user else "AI Tutor",
-                        size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE54,
+                        size=10, weight=ft.FontWeight.BOLD, color=_INK_SOFT,
                     ),
                     ft.Text(
                         text, size=13,
-                        color=ft.Colors.WHITE70 if is_user else ft.Colors.INDIGO_200,
+                        color=_INK_SOFT if is_user else _ACCENT,
                     ),
                 ],
                 spacing=2,
@@ -917,7 +938,7 @@ class NeuroLingoApp:
                 border_radius=10,
                 filled=True,
                 bgcolor=_SURFACE,
-                border_color=ft.Colors.INDIGO_300,
+                border_color=_TURQUOISE,
                 focused_border_color=_ACCENT,
             )
 
@@ -938,13 +959,13 @@ class NeuroLingoApp:
 
         return ft.Column(
             [
-                ft.Text("Add a New Sentence", size=20, weight=ft.FontWeight.W_600),
+                ft.Text("Add a New Sentence", size=20, color=_INK, font_family=_FONT_DISPLAY),
                 ft.Text(
                     "Vocabulary is only learned in context — always provide the full sentence.",
                     size=12,
-                    color=ft.Colors.WHITE54,
+                    color=_INK_SOFT,
                 ),
-                ft.Divider(height=20, color=ft.Colors.WHITE12),
+                ft.Divider(height=20, color=_DIVIDER),
                 ft.Text("Hebbian principle: no isolated words.", size=12, color=_ACCENT),
                 ft.Container(height=8),
                 self._field_en,
@@ -1044,15 +1065,15 @@ class NeuroLingoApp:
         return ft.Column(
             [
                 ft.Row(
-                    [back_btn, ft.Text("Settings", size=20, weight=ft.FontWeight.W_600)],
+                    [back_btn, ft.Text("Settings", size=20, color=_INK, font_family=_FONT_DISPLAY)],
                     spacing=4,
                 ),
                 ft.Text(
                     "Keys are stored locally in data/settings.json — never uploaded "
                     "anywhere by NeuroLingo itself. Changes take effect after restart.",
-                    size=12, color=ft.Colors.WHITE54,
+                    size=12, color=_INK_SOFT,
                 ),
-                ft.Divider(height=16, color=ft.Colors.WHITE12),
+                ft.Divider(height=16, color=_DIVIDER),
                 self._settings_preferred,
                 self._settings_anthropic_key,
                 self._settings_openai_key,
@@ -1062,14 +1083,14 @@ class NeuroLingoApp:
                 ft.Row([save_btn]),
                 self._settings_save_status,
                 ft.Container(height=16),
-                ft.Text("Provider status", size=14, weight=ft.FontWeight.W_600),
+                ft.Text("Provider status", size=14, color=_TURQUOISE, font_family=_FONT_DISPLAY),
                 self._settings_status_column,
                 ft.Container(height=16),
-                ft.Text("Data", size=14, weight=ft.FontWeight.W_600),
+                ft.Text("Data", size=14, color=_TURQUOISE, font_family=_FONT_DISPLAY),
                 ft.Text(
                     "Back up every sentence, card, and review history to a JSON file, "
                     "or restore from one.",
-                    size=12, color=ft.Colors.WHITE54,
+                    size=12, color=_INK_SOFT,
                 ),
                 ft.Row([export_btn, import_btn], spacing=8),
                 self._backup_status,
@@ -1104,13 +1125,13 @@ class NeuroLingoApp:
                     [
                         ft.Icon(
                             ft.Icons.CHECK_CIRCLE if available else ft.Icons.CANCEL_OUTLINED,
-                            color=_EASY if available else ft.Colors.WHITE30,
+                            color=_EASY if available else _INK_FAINT,
                             size=16,
                         ),
                         ft.Text(label, size=13),
                         ft.Text(
                             "available" if available else "not configured",
-                            size=11, color=ft.Colors.WHITE54,
+                            size=11, color=_INK_SOFT,
                         ),
                     ],
                     spacing=8,
