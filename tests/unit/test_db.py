@@ -238,6 +238,58 @@ def test_get_new_cards_returns_only_new_status(repo, sentence):
     assert all(c.status == CardStatus.NEW.value for c in new_cards)
 
 
+# ── count_cards_by_status ──────────────────────────────────────────────────────
+
+def test_count_cards_by_status_zero_when_none_match(repo):
+    assert repo.count_cards_by_status("graduated") == 0
+
+
+def test_count_cards_by_status_counts_only_matching_status(repo, sentence):
+    repo.add_card(Card(sentence_id=sentence.id, status=CardStatus.GRADUATED.value))
+    repo.add_card(Card(sentence_id=sentence.id, status=CardStatus.GRADUATED.value))
+    repo.add_card(Card(sentence_id=sentence.id, status=CardStatus.NEW.value))
+    assert repo.count_cards_by_status("graduated") == 2
+    assert repo.count_cards_by_status("new") == 1
+
+
+# ── search_sentences ────────────────────────────────────────────────────────────
+
+def test_search_sentences_empty_query_returns_everything(repo):
+    repo.add_sentence(Sentence(sentence_en="One.", sentence_fa="یک."))
+    repo.add_sentence(Sentence(sentence_en="Two.", sentence_fa="دو."))
+    assert len(repo.search_sentences("")) == 2
+    assert len(repo.search_sentences("   ")) == 2
+
+
+def test_search_sentences_matches_english_case_insensitively(repo):
+    repo.add_sentence(Sentence(sentence_en="Despite the heavy rain.", sentence_fa="X"))
+    repo.add_sentence(Sentence(sentence_en="A sunny day.", sentence_fa="Y"))
+    results = repo.search_sentences("RAIN")
+    assert len(results) == 1
+    assert "rain" in results[0].sentence_en.lower()
+
+
+def test_search_sentences_matches_farsi_text(repo):
+    repo.add_sentence(Sentence(sentence_en="It rained.", sentence_fa="باران آمد."))
+    repo.add_sentence(Sentence(sentence_en="It was sunny.", sentence_fa="آفتابی بود."))
+    results = repo.search_sentences("باران")
+    assert len(results) == 1
+
+
+def test_search_sentences_matches_context_notes(repo):
+    repo.add_sentence(Sentence(
+        sentence_en="If I were you...", sentence_fa="X",
+        context_notes="Second conditional",
+    ))
+    repo.add_sentence(Sentence(sentence_en="Other.", sentence_fa="Y"))
+    results = repo.search_sentences("conditional")
+    assert len(results) == 1
+
+
+def test_search_sentences_no_match_returns_empty(repo, sentence):
+    assert repo.search_sentences("no such word anywhere") == []
+
+
 # ── ReviewLog ─────────────────────────────────────────────────────────────────
 
 def test_add_review_log_assigns_id(repo, card):

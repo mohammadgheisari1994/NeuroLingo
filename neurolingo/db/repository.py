@@ -214,6 +214,36 @@ class DatabaseRepository:
             _log.exception("get_all_sentences failed")
             raise
 
+    def search_sentences(self, query: str) -> list[Sentence]:
+        """
+        Return sentences whose English text, Farsi text, or context notes
+        contain `query` (case-insensitive substring match) — used by the
+        Library screen's search field.
+
+        An empty/whitespace-only query returns every sentence, matching the
+        "no filter applied yet" state the search box starts in.
+        """
+        query = query.strip()
+        if not query:
+            return self.get_all_sentences()
+        try:
+            like = f"%{query}%"
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM sentences
+                    WHERE sentence_en LIKE ?
+                       OR sentence_fa LIKE ?
+                       OR context_notes LIKE ?
+                    ORDER BY id ASC
+                    """,
+                    (like, like, like),
+                ).fetchall()
+            return [_row_to_sentence(r) for r in rows]
+        except Exception:
+            _log.exception("search_sentences failed | query=%.50s", query)
+            raise
+
     def delete_sentence(self, sentence_id: int) -> None:
         """
         Delete a sentence.  Cards and review_log entries are removed
@@ -350,6 +380,20 @@ class DatabaseRepository:
             return [_row_to_card(r) for r in rows]
         except Exception:
             _log.exception("get_new_cards failed")
+            raise
+
+    def count_cards_by_status(self, status: str) -> int:
+        """Return how many cards currently have the given status — used by
+        the Library screen's summary stats (e.g. a "Graduated" count that
+        get_due_cards()/get_new_cards() don't cover)."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM cards WHERE status = ?", (status,)
+                ).fetchone()
+            return int(row["n"])
+        except Exception:
+            _log.exception("count_cards_by_status failed | status=%s", status)
             raise
 
     # ── Review Log ────────────────────────────────────────────────────────────
