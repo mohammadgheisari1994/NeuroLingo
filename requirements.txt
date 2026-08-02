@@ -1,5 +1,11 @@
 # ── UI Framework ─────────────────────────────────────────────────────────────
-flet>=0.21.0
+# flet is pinned exactly (unlike everything else in this file) because
+# flet-web/flet-desktop (installed as flet's own extras/sub-dependencies) and
+# flet-audio/flet-audio-recorder below all require an EXACT matching flet
+# version — installing them with loose >= bounds one at a time silently
+# resolved flet to a newer minor version than flet-web/flet-desktop wanted,
+# breaking the app at import time. Bump all four flet-* pins together.
+flet==0.85.3
 
 # ── RAG & Embeddings ─────────────────────────────────────────────────────────
 # Deliberately NOT using faiss-cpu or sentence-transformers here: both pull in
@@ -19,7 +25,18 @@ google-genai>=1.0.0
 llama-cpp-python>=0.3.34
 
 # ── Audio / Shadowing ────────────────────────────────────────────────────────
-sounddevice>=0.5.5
+# Recording happens client-side via flet-audio-recorder (the browser's own
+# mic through Flutter's record plugin) — sounddevice would record the
+# SERVER's microphone, which is wrong for this app's web-view architecture.
+# Reference audio is synthesized with pyttsx3, a thin wrapper around the OS's
+# native TTS engine (no bundled model, no PyTorch) so any sentence — not
+# just pre-recorded samples — gets a shadowing target. soundfile normalises
+# whatever container format each backend actually produces (e.g. macOS's
+# NSSpeechSynthesizer mislabels AIFF-C output with a .wav extension).
+flet-audio==0.85.3
+flet-audio-recorder==0.85.3
+pyttsx3>=2.90
+soundfile>=0.12.1
 numpy>=2.4.6
 scipy>=1.17.1
 

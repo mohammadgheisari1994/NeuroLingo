@@ -15,12 +15,18 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import flet as ft
+import flet_audio
+import flet_audio_recorder as far
 
 from logger_config import get_logger, setup_logging
+from neurolingo.audio import tts as audio_tts
+from neurolingo.audio.recorder import SAMPLE_RATE, pcm16_bytes_to_wav
+from neurolingo.audio.similarity import score_shadowing
 from neurolingo.core.llm.base import LLMConfig, ProviderError
 from neurolingo.core.llm.providers import (
     AnthropicProvider,
@@ -50,6 +56,9 @@ _log = get_logger(__name__)
 DB_PATH = Path("data/neurolingo.db")
 VECTOR_STORE_PATH = Path("data/knowledge")
 SETTINGS_PATH = Path("data/settings.json")
+TTS_CACHE_PATH = Path("data/tts_cache")
+UPLOAD_DIR = Path("data/uploads")
+SHADOWING_ATTEMPTS_PATH = Path("data/shadowing_attempts")
 
 # ── Sample sentences loaded on first run ──────────────────────────────────────
 
@@ -203,6 +212,10 @@ class NeuroLingoApp:
         self._show_translation = False
         self._advance_task: asyncio.Task | None = None
         self._tutor_conversation: TutorConversation | None = None
+        self._shadowing_recording = False
+        self._shadowing_upload_done: asyncio.Event | None = None
+        self._shadowing_upload_error: str | None = None
+        self._shadowing_upload_filename: str | None = None
         self._setup_page()
         self._build_ui()
         self._refresh_today()
@@ -343,6 +356,19 @@ class NeuroLingoApp:
 
         self._file_picker = ft.FilePicker()
         self.page.services.append(self._file_picker)
+
+        self._audio_player = flet_audio.Audio(src="")
+        self.page.services.append(self._audio_player)
+
+        self._audio_recorder = far.AudioRecorder(
+            configuration=far.AudioRecorderConfiguration(
+                encoder=far.AudioEncoder.PCM16BITS,
+                sample_rate=SAMPLE_RATE,
+                channels=1,
+            ),
+            on_upload=self._on_shadowing_upload,
+        )
+        self.page.services.append(self._audio_recorder)
 
         self.page.add(self._body)
 
@@ -788,6 +814,29 @@ class NeuroLingoApp:
             spacing=8,
         )
 
+        # ── Shadowing exercise: play a TTS reference, record your attempt
+        # via the browser's own microphone, get a rhythm/timing score. ──
+        self._shadowing_status = ft.Text("", size=12, color=_INK_SOFT)
+        self._shadowing_play_btn = ft.OutlinedButton(
+            "Play Reference", icon=ft.Icons.VOLUME_UP_OUTLINED,
+            on_click=self._play_reference_audio,
+        )
+        self._shadowing_record_btn = ft.OutlinedButton(
+            "Record My Attempt", icon=ft.Icons.MIC_OUTLINED,
+            on_click=self._toggle_shadowing_recording,
+        )
+        self._shadowing_section = ft.Column(
+            [
+                ft.Text(
+                    "Shadow This Sentence", size=13, color=_TURQUOISE,
+                    font_family=_FONT_DISPLAY,
+                ),
+                ft.Row([self._shadowing_play_btn, self._shadowing_record_btn], spacing=8),
+                self._shadowing_status,
+            ],
+            spacing=8,
+        )
+
         # Empty state
         self._empty_state = ft.Container(
             content=ft.Column(
@@ -840,6 +889,8 @@ class NeuroLingoApp:
                 self._result_banner,
                 ft.Container(height=8),
                 self._tutor_section,
+                ft.Container(height=8),
+                self._shadowing_section,
                 self._empty_state,
             ],
             spacing=8,
@@ -860,6 +911,10 @@ class NeuroLingoApp:
         self._tutor_followup_input.value = ""
         self._tutor_followup_row.visible = False
         self._tutor_conversation = None
+        self._shadowing_status.value = ""
+        self._shadowing_record_btn.text = "Record My Attempt"
+        self._shadowing_record_btn.icon = ft.Icons.MIC_OUTLINED
+        self._shadowing_recording = False
 
         # Prefer overdue → then new
         due = self.repo.get_due_cards(limit=1)
@@ -991,6 +1046,159 @@ class NeuroLingoApp:
             )
         finally:
             self._tutor_followup_btn.disabled = False
+            self.page.update()
+
+    # ── Shadowing exercise ───────────────────────────────────────────────────
+
+    async def _play_reference_audio(self, _e=None) -> None:
+        """Synthesize (or reuse the cached synthesis of) the current
+        sentence and play it back, so the student hears a model
+        pronunciation before recording their own attempt."""
+        if not self._current_sentence:
+            return
+        if not audio_tts.is_available():
+            self._shadowing_status.value = (
+                "Text-to-speech isn't available on this device — "
+                "no OS speech engine was found."
+            )
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+            return
+
+        try:
+            ref_path = audio_tts.get_reference_audio(
+                self._current_sentence.sentence_en, TTS_CACHE_PATH,
+            )
+            self._audio_player.src = ref_path.read_bytes()
+            self._audio_player.update()
+            await self._audio_player.play()
+        except Exception:
+            _log.exception("Failed to play shadowing reference audio")
+            self._shadowing_status.value = "Couldn't generate reference audio — check logs."
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+
+    def _on_shadowing_upload(self, e) -> None:
+        """Fires as the browser streams the recorded PCM bytes to our
+        upload endpoint; signals _stop_shadowing_recording() once the
+        upload is complete (progress==1.0) or has failed."""
+        if e.error:
+            _log.warning("Shadowing recording upload failed: %s", e.error)
+            self._shadowing_upload_error = e.error
+            if self._shadowing_upload_done is not None:
+                self._shadowing_upload_done.set()
+        elif e.progress is not None and e.progress >= 1.0:
+            if self._shadowing_upload_done is not None:
+                self._shadowing_upload_done.set()
+
+    async def _toggle_shadowing_recording(self, _e=None) -> None:
+        if self._shadowing_recording:
+            await self._stop_shadowing_recording()
+        else:
+            await self._start_shadowing_recording()
+
+    async def _start_shadowing_recording(self) -> None:
+        if not self._current_sentence:
+            return
+
+        try:
+            has_permission = await self._audio_recorder.has_permission()
+        except Exception:
+            _log.exception("Microphone permission check failed")
+            has_permission = False
+        if not has_permission:
+            self._shadowing_status.value = (
+                "Microphone permission was denied — check your browser's site "
+                "settings and try again."
+            )
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+            return
+
+        self._shadowing_upload_done = asyncio.Event()
+        self._shadowing_upload_error = None
+        file_name = f"shadow_{uuid.uuid4().hex}.pcm"
+        self._shadowing_upload_filename = file_name
+        upload_url = self.page.get_upload_url(file_name, expires=120)
+
+        try:
+            started = await self._audio_recorder.start_recording(
+                upload=far.AudioRecorderUploadSettings(
+                    upload_url=upload_url, file_name=file_name,
+                ),
+            )
+        except Exception:
+            _log.exception("Failed to start shadowing recording")
+            started = False
+
+        if not started:
+            self._shadowing_status.value = "Couldn't start recording — check mic permissions."
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+            return
+
+        self._shadowing_recording = True
+        self._shadowing_record_btn.text = "Stop Recording"
+        self._shadowing_record_btn.icon = ft.Icons.STOP_CIRCLE_OUTLINED
+        self._shadowing_status.value = "Recording — speak the sentence now."
+        self._shadowing_status.color = _TURQUOISE
+        self.page.update()
+
+    async def _stop_shadowing_recording(self) -> None:
+        self._shadowing_recording = False
+        self._shadowing_record_btn.text = "Record My Attempt"
+        self._shadowing_record_btn.icon = ft.Icons.MIC_OUTLINED
+
+        try:
+            await self._audio_recorder.stop_recording()
+        except Exception:
+            _log.exception("Failed to stop shadowing recording")
+
+        self._shadowing_status.value = "Uploading your recording…"
+        self._shadowing_status.color = _TURQUOISE
+        self.page.update()
+
+        assert self._shadowing_upload_done is not None
+        try:
+            await asyncio.wait_for(self._shadowing_upload_done.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            self._shadowing_status.value = "Upload timed out — try recording again."
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+            return
+
+        if self._shadowing_upload_error:
+            self._shadowing_status.value = f"Upload failed: {self._shadowing_upload_error}"
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+            return
+
+        raw_upload_path = UPLOAD_DIR / (self._shadowing_upload_filename or "")
+        if not self._shadowing_upload_filename or not raw_upload_path.exists():
+            self._shadowing_status.value = "Recording didn't arrive — try again."
+            self._shadowing_status.color = _AGAIN
+            self.page.update()
+            return
+
+        try:
+            raw_bytes = raw_upload_path.read_bytes()
+            wav_path = SHADOWING_ATTEMPTS_PATH / f"{raw_upload_path.stem}.wav"
+            pcm16_bytes_to_wav(raw_bytes, wav_path)
+
+            ref_path = audio_tts.get_reference_audio(
+                self._current_sentence.sentence_en, TTS_CACHE_PATH,
+            )
+            score = score_shadowing(ref_path, wav_path)
+
+            self._shadowing_status.value = f"Shadowing score: {score:.0f}/100"
+            self._shadowing_status.color = _EASY if score >= 70 else (
+                _HARD if score >= 40 else _AGAIN
+            )
+        except Exception:
+            _log.exception("Shadowing scoring failed")
+            self._shadowing_status.value = "Couldn't score your attempt — check logs."
+            self._shadowing_status.color = _AGAIN
+        finally:
             self.page.update()
 
     def _submit_grade(self, grade: int) -> None:
@@ -1520,6 +1728,10 @@ if __name__ == "__main__":
             target=main,
             view=ft.AppView.WEB_BROWSER,
             port=_port,
+            # Required for the Shadowing exercise: the browser can't write to
+            # the server's filesystem directly, so flet_audio_recorder streams
+            # raw PCM16 bytes to this upload endpoint instead.
+            upload_dir="data/uploads",
         )
     except Exception:
         log.exception("Fatal error in ft.app()")
