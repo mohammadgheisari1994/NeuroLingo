@@ -4,9 +4,21 @@
 # fails on CI even though it passes locally (flet is already installed there via the
 # full requirements.txt). flet has prebuilt wheels and no GPU/ML dependencies, so it
 # doesn't violate the "lightweight" goal this file exists for.
-flet>=0.21.0
+# flet-audio / flet-audio-recorder are the same story: main.py imports them at
+# module level for the Shadowing exercise's playback/recording controls — both
+# are thin Flutter-plugin wrappers with prebuilt wheels, not heavy ML deps.
+# soundfile/scipy are needed by neurolingo/audio's own tests (waveform
+# comparison runs on plain synthetic WAV fixtures, no microphone/TTS engine
+# involved) — pyttsx3 and sounddevice are NOT here since those need real
+# hardware/OS engines unavailable on CI runners; that code path is exercised
+# via is_available()-guarded tests instead.
+flet==0.85.3
+flet-audio==0.85.3
+flet-audio-recorder==0.85.3
 numpy>=2.4.6
 python-dotenv>=1.2.2
+scipy>=1.17.1
+soundfile>=0.12.1
 pytest>=9.1.1
 pytest-asyncio>=0.23.0
 pytest-cov>=7.1.0

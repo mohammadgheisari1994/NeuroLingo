@@ -21,6 +21,9 @@ data/*.sqlite
 data/*.npy
 data/knowledge.json
 data/settings.json
+data/tts_cache/
+data/uploads/
+data/shadowing_attempts/
 
 # ML model caches
 .cache/
