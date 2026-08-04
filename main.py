@@ -1503,6 +1503,17 @@ class NeuroLingoApp:
             border_radius=10,
             filled=True,
             bgcolor=_SURFACE,
+            # Without this, the popup menu renders with Flet's default
+            # (near-transparent) surface, so it visually overlaps the fields
+            # underneath instead of covering them — a real readability bug
+            # (#37), not just a style nit.
+            menu_style=ft.MenuStyle(
+                bgcolor=_SURFACE_RAISED,
+                shadow_color=ft.Colors.BLACK,
+                elevation=8,
+                shape=ft.RoundedRectangleBorder(radius=10),
+                side=ft.BorderSide(width=1, color=ft.Colors.with_opacity(0.25, _ACCENT)),
+            ),
         )
         self._settings_anthropic_key = _field("Anthropic API key", password=True)
         self._settings_openai_key = _field("OpenAI API key", password=True)
