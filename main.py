@@ -1589,10 +1589,8 @@ class NeuroLingoApp:
     def _refresh_settings_status(self, config: LLMConfig) -> None:
         self._settings_status_column.controls.clear()
         providers = [
-            ("Anthropic", AnthropicProvider(config)),
-            ("OpenAI", OpenAIProvider(config)),
-            ("Gemini", GeminiProvider(config)),
-            ("Local (llama.cpp)", LocalLlamaProvider(config)),
+            (label, self._provider_for_name(name, config))
+            for name, label in self._PROVIDER_LABELS.items()
         ]
         for label, provider in providers:
             available = provider.is_available()
@@ -1614,6 +1612,21 @@ class NeuroLingoApp:
                 )
             )
 
+    _PROVIDER_LABELS = {
+        "anthropic": "Anthropic",
+        "openai": "OpenAI",
+        "gemini": "Gemini",
+        "local": "Local (llama.cpp)",
+    }
+
+    def _provider_for_name(self, name: str, config: LLMConfig):
+        return {
+            "anthropic": AnthropicProvider,
+            "openai": OpenAIProvider,
+            "gemini": GeminiProvider,
+            "local": LocalLlamaProvider,
+        }.get(name, AnthropicProvider)(config)
+
     def _save_settings(self, _e=None) -> None:
         config = LLMConfig(
             preferred_provider=self._settings_preferred.value or "anthropic",
@@ -1625,10 +1638,29 @@ class NeuroLingoApp:
         config.save_to_file(self.settings_path)
         _log.info("Settings saved | preferred=%s", config.preferred_provider)
 
-        self._settings_save_status.value = (
-            "Saved — restart NeuroLingo for the AI tutor to use these settings."
-        )
-        self._settings_save_status.color = _EASY
+        # A generic "Saved" success message would lie if the provider the
+        # user just chose isn't actually usable yet (#38) — e.g. "Local"
+        # selected with no model path configured. Check it directly instead
+        # of just persisting the file and hoping for the best.
+        preferred = self._provider_for_name(config.preferred_provider, config)
+        label = self._PROVIDER_LABELS.get(config.preferred_provider, config.preferred_provider)
+        if preferred.is_available():
+            self._settings_save_status.value = (
+                "Saved — restart NeuroLingo for the AI tutor to use these settings."
+            )
+            self._settings_save_status.color = _EASY
+        else:
+            hint = (
+                "add a local GGUF model path below"
+                if config.preferred_provider == "local"
+                else f"add your {label} API key above"
+            )
+            self._settings_save_status.value = (
+                f"Saved, but {label} isn't usable yet — {hint}. NeuroLingo will "
+                "fall back to another configured provider, or show an error if "
+                "none are set up."
+            )
+            self._settings_save_status.color = _HARD
         self._refresh_settings_status(config)
         self.page.update()
 
