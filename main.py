@@ -977,9 +977,8 @@ class NeuroLingoApp:
         )
 
     _TUTOR_UNAVAILABLE_MESSAGE = (
-        "AI tutor isn't available right now — add an API key "
-        "(ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY) or a "
-        "local GGUF model (LOCAL_MODEL_PATH) to your .env file."
+        "AI tutor isn't available right now — add an API key or a local "
+        "model path in Settings (tap the gear icon above) to enable it."
     )
 
     async def _ask_tutor(self, _e=None) -> None:
