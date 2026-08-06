@@ -21,7 +21,12 @@ from neurolingo.core.rag.embeddings import (
     HashingEmbeddingProvider,
     build_embedding_provider,
 )
-from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation, _build_tutor_prompt
+from neurolingo.core.rag.rag_manager import (
+    RAGManager,
+    TutorConversation,
+    _build_tutor_prompt,
+    format_knowledge_entry,
+)
 from neurolingo.core.rag.vectorstore import NumpyVectorStore
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -336,6 +341,20 @@ def test_retrieve_returns_relevant_document(rag_manager):
     results = rag_manager.retrieve("present perfect continuous tense")
     assert len(results) > 0
     assert any("present perfect" in r["text"].lower() for r in results)
+
+
+# ── format_knowledge_entry ──────────────────────────────────────────────────────
+
+def test_format_knowledge_entry_joins_sentence_and_notes():
+    assert format_knowledge_entry("She has waited.", "present perfect") == (
+        "She has waited. — present perfect"
+    )
+
+
+def test_format_knowledge_entry_omits_dash_when_notes_empty():
+    # A user can save a sentence with no notes — must not produce a trailing
+    # "sentence — " artifact in the knowledge base.
+    assert format_knowledge_entry("She has waited.", "") == "She has waited."
 
 
 async def test_tutor_analyze_mistake_calls_llm(rag_manager):

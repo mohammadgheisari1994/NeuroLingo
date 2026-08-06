@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import pytest
 
+from neurolingo.core.llm.router import LLMRouter
+from neurolingo.core.rag.embeddings import HashingEmbeddingProvider
+from neurolingo.core.rag.rag_manager import RAGManager
+from neurolingo.core.rag.vectorstore import NumpyVectorStore
 from neurolingo.db.backup import (
     BACKUP_FORMAT_VERSION,
     BackupFormatError,
@@ -19,6 +23,13 @@ from neurolingo.db.backup import (
 )
 from neurolingo.db.models import ReviewLog, Sentence
 from neurolingo.db.repository import DatabaseRepository
+
+
+def _build_rag(min_similarity: float = 0.0) -> tuple[RAGManager, NumpyVectorStore]:
+    store = NumpyVectorStore(persist_path=None)
+    router = LLMRouter(providers=[], local_provider=None)
+    rag = RAGManager(store, HashingEmbeddingProvider(), router, min_similarity=min_similarity)
+    return rag, store
 
 # ── get_all_sentences / get_card_by_sentence_id ───────────────────────────────
 
@@ -143,6 +154,49 @@ def test_reimporting_the_same_backup_duplicates_not_merges(repo, sentence, tmp_p
     import_backup(fresh, backup)
 
     assert fresh.count_sentences() == 2  # documented behaviour, not a bug
+
+
+# ── import_backup() RAG indexing (#48) ─────────────────────────────────────────
+
+def test_import_without_rag_does_not_touch_knowledge_base(repo, sentence, tmp_path):
+    """Passing no `rag` (the pre-fix default) must keep working exactly as
+    before — importing shouldn't require a RAGManager."""
+    backup = export_backup(repo)
+    fresh = DatabaseRepository(tmp_path / "fresh.db")
+    fresh.create_schema()
+    imported = import_backup(fresh, backup)
+    assert imported == 1
+
+
+def test_import_with_rag_indexes_each_sentence(repo, sentence, tmp_path):
+    backup = export_backup(repo)
+    fresh = DatabaseRepository(tmp_path / "fresh.db")
+    fresh.create_schema()
+    rag, store = _build_rag()
+
+    import_backup(fresh, backup, rag=rag)
+
+    assert len(store) == 1
+    results = rag.retrieve(sentence.sentence_en, top_k=1)
+    assert results
+    assert sentence.sentence_en in results[0]["text"]
+
+
+def test_import_with_rag_indexes_every_sentence_in_a_multi_entry_backup(tmp_path):
+    fresh = DatabaseRepository(tmp_path / "fresh.db")
+    fresh.create_schema()
+    rag, store = _build_rag()
+    backup = {
+        "format_version": BACKUP_FORMAT_VERSION,
+        "sentences": [
+            {"sentence_en": "One.", "sentence_fa": "یک."},
+            {"sentence_en": "Two.", "sentence_fa": "دو.", "context_notes": "counting"},
+        ],
+    }
+
+    import_backup(fresh, backup, rag=rag)
+
+    assert len(store) == 2
 
 
 def test_import_new_style_sentence_missing_optional_fields(tmp_path):
