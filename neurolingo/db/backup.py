@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from logger_config import get_logger
+from neurolingo.core.rag.rag_manager import RAGManager, format_knowledge_entry
 from neurolingo.db.models import Card, ReviewLog, Sentence
 from neurolingo.db.repository import DatabaseRepository
 
@@ -75,10 +76,18 @@ def export_backup(repo: DatabaseRepository) -> dict[str, Any]:
     return backup
 
 
-def import_backup(repo: DatabaseRepository, data: dict[str, Any]) -> int:
+def import_backup(
+    repo: DatabaseRepository, data: dict[str, Any], rag: RAGManager | None = None,
+) -> int:
     """
     Restore sentences (+ cards + review history) from a backup dict produced
     by export_backup(). Always inserts fresh rows.
+
+    Args:
+        rag: when given, each imported sentence is also indexed into the AI
+            tutor's knowledge base (matching what happens when a sentence is
+            saved through the Add screen). Omitted in tests that don't care
+            about RAG grounding.
 
     Returns:
         The number of sentences imported.
@@ -106,6 +115,10 @@ def import_backup(repo: DatabaseRepository, data: dict[str, Any]) -> int:
             source=entry.get("source", ""),
         ))
         imported += 1
+
+        if rag is not None:
+            text = format_knowledge_entry(sentence.sentence_en, sentence.context_notes)
+            rag.add_knowledge(text, metadata={"source": "import"})
 
         card_data = entry.get("card")
         if card_data is None:

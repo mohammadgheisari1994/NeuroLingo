@@ -37,7 +37,7 @@ from neurolingo.core.llm.providers import (
 from neurolingo.core.llm.router import LLMRouter
 from neurolingo.core.rag.base import EmbeddingProvider
 from neurolingo.core.rag.embeddings import build_embedding_provider
-from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation
+from neurolingo.core.rag.rag_manager import RAGManager, TutorConversation, format_knowledge_entry
 from neurolingo.core.rag.vectorstore import NumpyVectorStore
 from neurolingo.core.srs.algorithm import (
     GRADE_AGAIN,
@@ -114,7 +114,7 @@ def _seed_knowledge(rag: RAGManager) -> None:
     """Index each sample sentence's grammar note so the AI tutor has real
     context to retrieve instead of answering with no grounding at all."""
     for en, _fa, notes in _SAMPLES:
-        rag.add_knowledge(f"{en} — {notes}", metadata={"source": "seed"})
+        rag.add_knowledge(format_knowledge_entry(en, notes), metadata={"source": "seed"})
     _log.info("Indexed %d grammar notes into the knowledge base", len(_SAMPLES))
 
 
@@ -1465,6 +1465,7 @@ class NeuroLingoApp:
             next_review_date=datetime.now(timezone.utc),
             status=CardStatus.NEW.value,
         ))
+        self.rag.add_knowledge(format_knowledge_entry(en, notes), metadata={"source": "user"})
 
         _log.info("New sentence saved | id=%d | en=%.40s", sentence.id, en)
 
@@ -1712,7 +1713,7 @@ class NeuroLingoApp:
                 return  # user cancelled the dialog
 
             data = json.loads(files[0].bytes.decode("utf-8"))
-            imported = import_backup(self.repo, data)
+            imported = import_backup(self.repo, data, rag=self.rag)
             self._backup_status.value = f"Imported {imported} sentence(s)."
             self._backup_status.color = _EASY
         except BackupFormatError as exc:

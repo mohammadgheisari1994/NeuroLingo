@@ -92,6 +92,16 @@ class TutorConversation:
 
 # ── Manager ───────────────────────────────────────────────────────────────────
 
+def format_knowledge_entry(sentence_en: str, notes: str) -> str:
+    """Build the RAG knowledge-base text for a sentence.
+
+    Shared by seeding, manually saving a new sentence, and restoring a
+    backup, so all three ways a sentence enters the app end up indexed the
+    same way.
+    """
+    return f"{sentence_en} — {notes}" if notes else sentence_en
+
+
 class RAGManager:
     """
     High-level interface used by the UI and SRS review flow.
