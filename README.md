@@ -106,6 +106,12 @@ python3 -m pytest tests/unit/ --cov=neurolingo --cov=logger_config --cov-report=
 ruff check .
 ```
 
+## Contributing
+
+Every change (however small) follows a branch → PR → merge → delete-branch cycle; see
+[DEVELOPMENT_RULES.md](DEVELOPMENT_RULES.md) for the full engineering, workflow, and agent rules
+this repo follows.
+
 ## Module status
 
 | Module | Status |
