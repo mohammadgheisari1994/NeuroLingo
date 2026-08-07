@@ -34,7 +34,7 @@ llama-cpp-python>=0.3.34
 # whatever container format each backend actually produces (e.g. macOS's
 # NSSpeechSynthesizer mislabels AIFF-C output with a .wav extension).
 flet-audio==0.85.3
-flet-audio-recorder==0.85.3
+flet-audio-recorder==0.86.5
 pyttsx3>=2.90
 soundfile>=0.12.1
 numpy>=2.4.6
