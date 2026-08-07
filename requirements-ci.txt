@@ -18,7 +18,7 @@ flet-audio-recorder==0.85.3
 numpy>=2.4.6
 python-dotenv>=1.2.2
 scipy>=1.17.1
-soundfile>=0.12.1
+soundfile>=0.14.0
 pytest>=9.1.1
 pytest-asyncio>=0.23.0
 pytest-cov>=7.1.0

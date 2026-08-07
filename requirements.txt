@@ -36,7 +36,7 @@ llama-cpp-python>=0.3.34
 flet-audio==0.85.3
 flet-audio-recorder==0.85.3
 pyttsx3>=2.90
-soundfile>=0.12.1
+soundfile>=0.14.0
 numpy>=2.4.6
 scipy>=1.17.1
 
