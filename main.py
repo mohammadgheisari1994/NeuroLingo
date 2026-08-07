@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -190,6 +191,17 @@ def _border_all(width: float, color: str) -> ft.Border:
     return ft.Border(top=side, right=side, bottom=side, left=side)
 
 
+def _shuffled_scramble_pool(words: list[str]) -> list[str]:
+    """Shuffle a sentence's words for the word-scramble review puzzle (#52),
+    guaranteed not to land on the already-solved order — which wouldn't be
+    a puzzle at all."""
+    pool = list(words)
+    random.shuffle(pool)
+    if len(pool) > 1 and pool == words:
+        pool[0], pool[1] = pool[1], pool[0]
+    return pool
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 class NeuroLingoApp:
@@ -216,6 +228,9 @@ class NeuroLingoApp:
         self._shadowing_upload_done: asyncio.Event | None = None
         self._shadowing_upload_error: str | None = None
         self._shadowing_upload_filename: str | None = None
+        self._scramble_words: list[str] = []
+        self._scramble_pool: list[str] = []
+        self._scramble_placed: list[str] = []
         self._setup_page()
         self._build_ui()
         self._refresh_today()
@@ -663,7 +678,8 @@ class NeuroLingoApp:
         self._progress_label = ft.Text("0 reviewed this session", size=11, color=_INK_SOFT)
         self._session_count = 0
 
-        # Card face — English sentence
+        # Card face — English sentence (hidden behind the word-scramble
+        # puzzle below until the user reconstructs it or reveals the answer)
         self._card_en = ft.Text(
             "Loading…",
             size=18,
@@ -671,6 +687,7 @@ class NeuroLingoApp:
             text_align=ft.TextAlign.CENTER,
             color=_INK,
             font_family=_FONT_BODY_BOLD,
+            visible=False,
         )
         self._card_context = ft.Text(
             "",
@@ -687,11 +704,47 @@ class NeuroLingoApp:
             text_align=ft.TextAlign.CENTER,
             visible=False,
         )
-        self._reveal_btn = ft.OutlinedButton(
-            "Show Translation",
-            icon=ft.Icons.VISIBILITY_OUTLINED,
-            on_click=self._reveal_translation,
+
+        # Word-scramble recall puzzle — active retrieval practice that
+        # replaces the old passive "Show Translation" flip (#52). The
+        # shuffled words live in the pool row; tapping one moves it into the
+        # slots row in order, and tapping a placed word sends it back.
+        self._scramble_hint = ft.Text(
+            "Tap the words in order to rebuild the sentence.",
+            size=11,
+            color=_INK_SOFT,
+            text_align=ft.TextAlign.CENTER,
         )
+        self._scramble_slots_row = ft.Row(
+            wrap=True, spacing=6, run_spacing=6, alignment=ft.MainAxisAlignment.CENTER,
+        )
+        self._scramble_pool_row = ft.Row(
+            wrap=True, spacing=6, run_spacing=6, alignment=ft.MainAxisAlignment.CENTER,
+        )
+        self._scramble_feedback = ft.Text("", size=12, text_align=ft.TextAlign.CENTER)
+        self._scramble_reset_btn = ft.TextButton(
+            "Reset", icon=ft.Icons.REFRESH_ROUNDED, on_click=self._reset_scramble,
+        )
+        self._scramble_reveal_btn = ft.TextButton(
+            "Reveal Answer", icon=ft.Icons.VISIBILITY_OUTLINED,
+            on_click=self._reveal_scramble_answer,
+        )
+        self._scramble_container = ft.Column(
+            [
+                self._scramble_hint,
+                self._scramble_slots_row,
+                ft.Divider(color=_DIVIDER),
+                self._scramble_pool_row,
+                self._scramble_feedback,
+                ft.Row(
+                    [self._scramble_reset_btn, self._scramble_reveal_btn],
+                    alignment=ft.MainAxisAlignment.CENTER, spacing=4,
+                ),
+            ],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
         self._card_container = ft.Container(
             content=ft.Column(
                 [
@@ -702,13 +755,12 @@ class NeuroLingoApp:
                         padding=12,
                     ),
                     ft.Container(height=8),
+                    self._scramble_container,
                     self._card_en,
                     ft.Container(height=12),
                     self._card_fa,
                     ft.Divider(color=_DIVIDER),
                     self._card_context,
-                    ft.Container(height=8),
-                    self._reveal_btn,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=4,
@@ -943,13 +995,98 @@ class NeuroLingoApp:
             self._card_fa.value = self._current_sentence.sentence_fa
             self._card_fa.visible = False
             self._card_context.value = self._current_sentence.context_notes
-        self._reveal_btn.visible = True
+            self._setup_scramble(self._current_sentence.sentence_en)
         self.page.update()
         _log.info("Loaded card id=%s for review", card.id)
 
+    def _setup_scramble(self, sentence_en: str) -> None:
+        """Shuffle the sentence's words into a tap-to-rebuild puzzle — the
+        active-recall step that replaces the old passive 'Show Translation'
+        flip (#52)."""
+        self._scramble_words = sentence_en.split()
+        self._scramble_pool = _shuffled_scramble_pool(self._scramble_words)
+        self._scramble_placed = []
+        self._scramble_feedback.value = ""
+        self._scramble_reveal_btn.disabled = False
+        self._scramble_reset_btn.disabled = False
+        self._scramble_container.visible = True
+        self._card_en.visible = False
+        self._render_scramble()
+
+    def _render_scramble(self) -> None:
+        """Rebuild the pool/slot chip rows from current scramble state."""
+        self._scramble_slots_row.controls = [
+            ft.OutlinedButton(
+                word,
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
+                on_click=lambda _e, i=i: self._unplace_scramble_word(i),
+            )
+            for i, word in enumerate(self._scramble_placed)
+        ]
+        self._scramble_pool_row.controls = [
+            ft.OutlinedButton(
+                word,
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
+                on_click=lambda _e, i=i: self._place_scramble_word(i),
+            )
+            for i, word in enumerate(self._scramble_pool)
+        ]
+        self.page.update()
+
+    def _place_scramble_word(self, pool_index: int) -> None:
+        word = self._scramble_pool.pop(pool_index)
+        self._scramble_placed.append(word)
+        self._render_scramble()
+        if len(self._scramble_placed) == len(self._scramble_words):
+            self._check_scramble_complete()
+
+    def _unplace_scramble_word(self, placed_index: int) -> None:
+        word = self._scramble_placed.pop(placed_index)
+        self._scramble_pool.append(word)
+        self._scramble_feedback.value = ""
+        self._render_scramble()
+
+    def _reset_scramble(self, _e=None) -> None:
+        if self._current_sentence:
+            self._setup_scramble(self._current_sentence.sentence_en)
+
+    def _check_scramble_complete(self) -> None:
+        """All slots are filled — check whether the reconstruction is
+        correct. A wrong arrangement lets the user keep self-correcting
+        (tap a placed word to send it back) or hit Reset/Reveal Answer,
+        rather than being forced into anything."""
+        if self._scramble_placed == self._scramble_words:
+            self._scramble_feedback.value = "✓ Correct!"
+            self._scramble_feedback.color = _EASY
+            self._scramble_reveal_btn.disabled = True
+            self._scramble_reset_btn.disabled = True
+            self.page.update()
+            self._advance_task = self.page.run_task(self._delayed_scramble_reveal)
+        else:
+            self._scramble_feedback.value = "Not quite — tap a word to move it back, or try again."
+            self._scramble_feedback.color = _HARD
+            self.page.update()
+
+    async def _delayed_scramble_reveal(self) -> None:
+        await asyncio.sleep(0.6)
+        self._reveal_translation()
+
+    def _reveal_scramble_answer(self, _e=None) -> None:
+        """The 'I give up' escape hatch — fills in the correct order and
+        moves straight on, same as a successful solve."""
+        self._scramble_placed = list(self._scramble_words)
+        self._scramble_pool = []
+        self._scramble_feedback.value = "Answer revealed."
+        self._scramble_feedback.color = _ACCENT
+        self._scramble_reveal_btn.disabled = True
+        self._scramble_reset_btn.disabled = True
+        self._render_scramble()
+        self._reveal_translation()
+
     def _reveal_translation(self, _e=None) -> None:
+        self._scramble_container.visible = False
+        self._card_en.visible = True
         self._card_fa.visible = True
-        self._reveal_btn.visible = False
         self._grade_row.visible = True
         self._tutor_input.visible = True
         self._tutor_ask_btn.visible = True
