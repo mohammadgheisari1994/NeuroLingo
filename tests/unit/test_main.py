@@ -75,3 +75,29 @@ def test_prepare_vector_store_wipes_mismatched_dimension_data(tmp_path):
 def test_prepare_vector_store_empty_path_is_fine(tmp_path):
     store = main._prepare_vector_store(tmp_path / "does-not-exist-yet", HashingEmbeddingProvider())
     assert len(store) == 0
+
+
+# ── _shuffled_scramble_pool (#52 word-scramble review puzzle) ────────────────
+
+def test_shuffled_scramble_pool_is_a_permutation_of_the_input():
+    words = ["She", "has", "been", "waiting", "for", "the", "bus."]
+    pool = main._shuffled_scramble_pool(words)
+    assert sorted(pool) == sorted(words)
+    assert pool is not words  # never mutates the caller's list
+
+
+def test_shuffled_scramble_pool_never_matches_original_order():
+    # Run many times since random.shuffle() could otherwise coincidentally
+    # reproduce the original order — the anti-identity guard must catch it
+    # every time, not just usually.
+    words = ["One", "two"]
+    for _ in range(200):
+        assert main._shuffled_scramble_pool(words) != words
+
+
+def test_shuffled_scramble_pool_single_word_is_unchanged():
+    assert main._shuffled_scramble_pool(["Hello."]) == ["Hello."]
+
+
+def test_shuffled_scramble_pool_empty_list_is_fine():
+    assert main._shuffled_scramble_pool([]) == []
