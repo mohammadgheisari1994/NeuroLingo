@@ -1484,29 +1484,44 @@ class NeuroLingoApp:
             interval_text = f"{card.interval}d" if card else "—"
             self._lib_list.controls.append(
                 ft.Container(
-                    content=ft.Column(
+                    content=ft.Row(
                         [
-                            ft.Text(
-                                sentence.sentence_en, size=13,
-                                weight=ft.FontWeight.W_500, color=_INK,
-                            ),
-                            ft.Row(
+                            ft.Column(
                                 [
-                                    ft.Container(
-                                        content=ft.Text(
-                                            status.upper(), size=10,
-                                            weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
-                                        ),
-                                        bgcolor=self._status_color(status),
-                                        border_radius=999,
-                                        padding=_pad_sym(v=3, h=8),
+                                    ft.Text(
+                                        sentence.sentence_en, size=13,
+                                        weight=ft.FontWeight.W_500, color=_INK,
                                     ),
-                                    ft.Text(f"Interval: {interval_text}", size=11, color=_INK_SOFT),
+                                    ft.Row(
+                                        [
+                                            ft.Container(
+                                                content=ft.Text(
+                                                    status.upper(), size=10,
+                                                    weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
+                                                ),
+                                                bgcolor=self._status_color(status),
+                                                border_radius=999,
+                                                padding=_pad_sym(v=3, h=8),
+                                            ),
+                                            ft.Text(
+                                                f"Interval: {interval_text}", size=11,
+                                                color=_INK_SOFT,
+                                            ),
+                                        ],
+                                        spacing=8,
+                                    ),
                                 ],
-                                spacing=8,
+                                spacing=4,
+                                expand=True,
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                icon_color=_AGAIN,
+                                tooltip="Delete sentence",
+                                on_click=lambda _e, s=sentence: self._confirm_delete_sentence(s),
                             ),
                         ],
-                        spacing=4,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     ),
                     bgcolor=_SURFACE,
                     border_radius=12,
@@ -1523,6 +1538,41 @@ class NeuroLingoApp:
             self._lib_list.controls.append(ft.Text(message, color=_INK_SOFT, size=13))
 
         self.page.update()
+
+    def _confirm_delete_sentence(self, sentence: Sentence) -> None:
+        """Ask before deleting (#49) — deletion cascades to the card and its
+        full review history, so a single accidental tap must not be enough."""
+        preview = (
+            sentence.sentence_en if len(sentence.sentence_en) <= 60
+            else sentence.sentence_en[:57] + "…"
+        )
+
+        def _do_delete(_e=None) -> None:
+            self.repo.delete_sentence(sentence.id)
+            _log.info("Sentence deleted | id=%d", sentence.id)
+            self.page.pop_dialog()
+            self._refresh_library(self._lib_search.value or "")
+            self._refresh_today()
+
+        def _cancel(_e=None) -> None:
+            self.page.pop_dialog()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Delete this sentence?"),
+            content=ft.Text(
+                f"“{preview}” will be permanently removed, along with its "
+                "review history. This can't be undone."
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=_cancel),
+                ft.TextButton(
+                    "Delete", style=ft.ButtonStyle(color=_AGAIN), on_click=_do_delete,
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page.show_dialog(dialog)
 
     # ══════════════════════════════════════════════════════════════════════════
     # ADD SENTENCE tab
