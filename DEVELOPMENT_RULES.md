@@ -78,7 +78,11 @@ These bind any AI agent working in this repo, in addition to the rules above:
   couldn't be). Wait for CI to go green before merging — don't merge on faith.
 - **Merge & clean up**: after merge, delete the branch both locally and on the remote — no stale
   branches left behind.
-- **Commit messages**: explain *why*, not just *what* — the diff already shows what changed.
+- **Commit messages**: explain *why*, not just *what* — the diff already shows what changed. When
+  a commit is for a tracked issue, put the issue number in the subject line right after the type
+  prefix, e.g. `fix: index user-added sentences into the AI Tutor's knowledge base (#48)` — this
+  keeps `git log --oneline` traceable back to its issue without opening the PR. Skip it only for
+  changes with no tracked issue (e.g. a rule/doc tweak requested directly in chat).
 - **Issue hygiene**: every issue gets an appropriate label set (`bug`/`enhancement`/`documentation`
   + `priority: high|medium|low` + a domain label like `ui-ux`/`ai-engineering`/`reliability` where
   relevant) and an assignee; reference related issues with `#N` instead of duplicating their
