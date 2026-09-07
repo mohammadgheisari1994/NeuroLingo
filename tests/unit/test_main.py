@@ -101,3 +101,41 @@ def test_shuffled_scramble_pool_single_word_is_unchanged():
 
 def test_shuffled_scramble_pool_empty_list_is_fine():
     assert main._shuffled_scramble_pool([]) == []
+
+
+# ── _build_session_summary (#54 end-of-session recap) ────────────────────────
+#
+# Reads only plain int/bool instance attributes — no Flet Page needed — so a
+# bare object with just those attributes set is enough to call the real
+# bound method directly.
+
+def _fake_session(count, first_try_correct, first_try_total, best_streak):
+    app = object.__new__(main.NeuroLingoApp)
+    app._session_count = count
+    app._session_first_try_correct = first_try_correct
+    app._session_first_try_total = first_try_total
+    app._session_best_streak = best_streak
+    return app
+
+
+def test_session_summary_is_empty_when_no_cards_were_reviewed():
+    # The queue was already empty on arrival — no session happened, so no
+    # summary should be shown (distinct from "reviewed 0 cards").
+    app = _fake_session(count=0, first_try_correct=0, first_try_total=0, best_streak=0)
+    assert main.NeuroLingoApp._build_session_summary(app) == ""
+
+
+def test_session_summary_reports_counts_and_accuracy():
+    app = _fake_session(count=5, first_try_correct=4, first_try_total=5, best_streak=3)
+    summary = main.NeuroLingoApp._build_session_summary(app)
+    assert "5 reviewed" in summary
+    assert "80% first-try" in summary
+    assert "best streak 3" in summary
+
+
+def test_session_summary_handles_perfect_and_zero_accuracy():
+    perfect = _fake_session(count=2, first_try_correct=2, first_try_total=2, best_streak=2)
+    assert "100% first-try" in main.NeuroLingoApp._build_session_summary(perfect)
+
+    zero = _fake_session(count=2, first_try_correct=0, first_try_total=2, best_streak=0)
+    assert "0% first-try" in main.NeuroLingoApp._build_session_summary(zero)
