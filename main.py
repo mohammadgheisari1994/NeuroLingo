@@ -231,6 +231,11 @@ class NeuroLingoApp:
         self._scramble_words: list[str] = []
         self._scramble_pool: list[str] = []
         self._scramble_placed: list[str] = []
+        self._scramble_had_wrong_attempt = False
+        self._session_streak = 0
+        self._session_best_streak = 0
+        self._session_first_try_correct = 0
+        self._session_first_try_total = 0
         self._setup_page()
         self._build_ui()
         self._refresh_today()
@@ -660,9 +665,22 @@ class NeuroLingoApp:
         }.get(status, ft.Colors.GREY_700)
 
     def _go_to_review(self, _e=None) -> None:
+        self._reset_session_stats()
         self._load_next_card()
         self._content_switcher.content = self._review_panel
         self.page.update()
+
+    def _reset_session_stats(self) -> None:
+        """Start a fresh review session's counters (#54) — without this, a
+        second session in the same app run would inherit the first
+        session's streak/accuracy numbers instead of starting clean."""
+        self._session_count = 0
+        self._session_streak = 0
+        self._session_best_streak = 0
+        self._session_first_try_correct = 0
+        self._session_first_try_total = 0
+        self._progress_label.value = "0 reviewed this session"
+        self._streak_badge.visible = False
 
     def _back_from_review(self, _e=None) -> None:
         self._content_switcher.content = self._today_panel
@@ -677,6 +695,23 @@ class NeuroLingoApp:
         self._progress_bar = ft.ProgressBar(value=0, bgcolor=_SURFACE, color=_ACCENT)
         self._progress_label = ft.Text("0 reviewed this session", size=11, color=_INK_SOFT)
         self._session_count = 0
+
+        # Combo streak badge (#54) — consecutive cards solved on the first
+        # try, no economy/points behind it, just an honest running count.
+        self._streak_text = ft.Text("", size=11, weight=ft.FontWeight.BOLD, color=_ACCENT)
+        self._streak_badge = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.LOCAL_FIRE_DEPARTMENT_ROUNDED, color=_ACCENT, size=14),
+                    self._streak_text,
+                ],
+                spacing=2, tight=True,
+            ),
+            bgcolor=ft.Colors.with_opacity(0.14, _ACCENT),
+            border_radius=999,
+            padding=_pad_sym(v=2, h=8),
+            visible=False,
+        )
 
         # Card face — English sentence (hidden behind the word-scramble
         # puzzle below until the user reconstructs it or reveals the answer)
@@ -890,6 +925,13 @@ class NeuroLingoApp:
         )
 
         # Empty state
+        # Session summary (#54) — filled in only when a real session just
+        # happened (session_count > 0); stays empty/hidden if the queue was
+        # already empty on arrival, so it never claims a session that didn't.
+        self._session_summary_text = ft.Text(
+            "", size=13, color=_INK_SOFT, text_align=ft.TextAlign.CENTER,
+        )
+
         self._empty_state = ft.Container(
             content=ft.Column(
                 [
@@ -910,6 +952,7 @@ class NeuroLingoApp:
                         size=14, color=_INK_SOFT,
                         text_align=ft.TextAlign.CENTER,
                     ),
+                    self._session_summary_text,
                     ft.Container(height=24),
                     ft.FilledButton("Add a Sentence", icon=ft.Icons.ADD, on_click=self._go_to_add),
                 ],
@@ -932,7 +975,10 @@ class NeuroLingoApp:
                     ],
                     spacing=4,
                 ),
-                ft.Row([self._progress_label], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row(
+                    [self._progress_label, self._streak_badge],
+                    alignment=ft.MainAxisAlignment.CENTER, spacing=8,
+                ),
                 self._progress_bar,
                 ft.Container(height=16),
                 self._card_container,
@@ -980,6 +1026,8 @@ class NeuroLingoApp:
             self._current_card = None
             self._card_container.visible = False
             self._grade_row.visible = False
+            self._session_summary_text.value = self._build_session_summary()
+            self._session_summary_text.visible = bool(self._session_summary_text.value)
             self._empty_state.visible = True
             self.page.update()
             return
@@ -999,6 +1047,21 @@ class NeuroLingoApp:
         self.page.update()
         _log.info("Loaded card id=%s for review", card.id)
 
+    def _build_session_summary(self) -> str:
+        """One-line recap shown on the empty-queue screen (#54) — empty
+        string (no summary) when the queue was already empty on arrival,
+        since no session actually happened."""
+        if self._session_count == 0:
+            return ""
+        accuracy = (
+            round(100 * self._session_first_try_correct / self._session_first_try_total)
+            if self._session_first_try_total else 0
+        )
+        return (
+            f"This session: {self._session_count} reviewed · "
+            f"{accuracy}% first-try · best streak {self._session_best_streak}"
+        )
+
     def _setup_scramble(self, sentence_en: str) -> None:
         """Shuffle the sentence's words into a tap-to-rebuild puzzle — the
         active-recall step that replaces the old passive 'Show Translation'
@@ -1006,6 +1069,7 @@ class NeuroLingoApp:
         self._scramble_words = sentence_en.split()
         self._scramble_pool = _shuffled_scramble_pool(self._scramble_words)
         self._scramble_placed = []
+        self._scramble_had_wrong_attempt = False
         self._scramble_feedback.value = ""
         self._scramble_reveal_btn.disabled = False
         self._scramble_reset_btn.disabled = False
@@ -1063,6 +1127,7 @@ class NeuroLingoApp:
             self.page.update()
             self._advance_task = self.page.run_task(self._delayed_scramble_reveal)
         else:
+            self._scramble_had_wrong_attempt = True
             self._scramble_feedback.value = "Not quite — tap a word to move it back, or try again."
             self._scramble_feedback.color = _HARD
             self.page.update()
@@ -1073,7 +1138,9 @@ class NeuroLingoApp:
 
     def _reveal_scramble_answer(self, _e=None) -> None:
         """The 'I give up' escape hatch — fills in the correct order and
-        moves straight on, same as a successful solve."""
+        moves straight on, same as a successful solve. Doesn't count as a
+        first-try success for the streak/accuracy summary (#54)."""
+        self._scramble_had_wrong_attempt = True
         self._scramble_placed = list(self._scramble_words)
         self._scramble_pool = []
         self._scramble_feedback.value = "Answer revealed."
@@ -1090,7 +1157,27 @@ class NeuroLingoApp:
         self._grade_row.visible = True
         self._tutor_input.visible = True
         self._tutor_ask_btn.visible = True
+        self._record_scramble_outcome()
         self.page.update()
+
+    def _record_scramble_outcome(self) -> None:
+        """Track first-try accuracy + combo streak (#54) from how the
+        word-scramble recall (#52) just went for this card. Runs exactly
+        once per card, right as its recall phase concludes (success or
+        give-up) — before grading, independent of the SM-2 grade chosen."""
+        self._session_first_try_total += 1
+        if self._scramble_had_wrong_attempt:
+            self._session_streak = 0
+        else:
+            self._session_first_try_correct += 1
+            self._session_streak += 1
+            self._session_best_streak = max(self._session_best_streak, self._session_streak)
+
+        if self._session_streak >= 2:
+            self._streak_text.value = str(self._session_streak)
+            self._streak_badge.visible = True
+        else:
+            self._streak_badge.visible = False
 
     def _tutor_turn_widget(self, role: str, text: str) -> ft.Container:
         is_user = role == "user"
