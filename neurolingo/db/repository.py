@@ -182,6 +182,36 @@ class DatabaseRepository:
             _log.exception("add_sentence failed")
             raise
 
+    def update_sentence(self, sentence: Sentence) -> None:
+        """Persist edited text/translation/notes for an existing sentence
+        (#50). `id` must already be set (i.e. this sentence came from
+        add_sentence()/get_sentence(), not a fresh, unsaved Sentence)."""
+        sql = """
+        UPDATE sentences SET
+            sentence_en   = ?,
+            sentence_fa   = ?,
+            context_notes = ?,
+            updated_at    = ?
+        WHERE id = ?
+        """
+        try:
+            sentence.updated_at = datetime.now(timezone.utc)
+            with self._connect() as conn:
+                conn.execute(sql, (
+                    sentence.sentence_en,
+                    sentence.sentence_fa,
+                    sentence.context_notes,
+                    _fmt(sentence.updated_at),
+                    sentence.id,
+                ))
+            _log.debug(
+                "Sentence updated | id=%d | en=%.50s",
+                sentence.id, sentence.sentence_en,
+            )
+        except Exception:
+            _log.exception("update_sentence failed | id=%s", sentence.id)
+            raise
+
     def get_sentence(self, sentence_id: int) -> Sentence | None:
         """Return the Sentence with the given id, or None if not found."""
         try:

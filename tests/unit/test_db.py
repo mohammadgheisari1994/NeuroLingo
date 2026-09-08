@@ -77,6 +77,37 @@ def test_delete_sentence_removes_row(repo, sentence):
     assert repo.get_sentence(sentence.id) is None
 
 
+def test_update_sentence_persists_edited_fields(repo, sentence):
+    sentence.sentence_en = "The quick brown fox jumps over the lazy cat."
+    sentence.sentence_fa = "متن ویرایش‌شده."
+    sentence.context_notes = "Edited note."
+    repo.update_sentence(sentence)
+
+    fetched = repo.get_sentence(sentence.id)
+    assert fetched.sentence_en == "The quick brown fox jumps over the lazy cat."
+    assert fetched.sentence_fa == "متن ویرایش‌شده."
+    assert fetched.context_notes == "Edited note."
+
+
+def test_update_sentence_refreshes_updated_at(repo, sentence):
+    original_updated_at = sentence.updated_at
+    sentence.context_notes = "Changed."
+    repo.update_sentence(sentence)
+
+    fetched = repo.get_sentence(sentence.id)
+    assert fetched.updated_at >= original_updated_at
+
+
+def test_update_sentence_does_not_touch_source_or_id(repo, sentence):
+    original_source = sentence.source
+    sentence.sentence_en = "Edited."
+    repo.update_sentence(sentence)
+
+    fetched = repo.get_sentence(sentence.id)
+    assert fetched.id == sentence.id
+    assert fetched.source == original_source
+
+
 # ── Cards ─────────────────────────────────────────────────────────────────────
 
 def test_add_card_assigns_integer_id(repo, sentence):
