@@ -236,6 +236,7 @@ class NeuroLingoApp:
         self._session_best_streak = 0
         self._session_first_try_correct = 0
         self._session_first_try_total = 0
+        self._editing_sentence: Sentence | None = None
         self._setup_page()
         self._build_ui()
         self._refresh_today()
@@ -401,6 +402,11 @@ class NeuroLingoApp:
             self.TAB_LIBRARY: self._library_panel,
             self.TAB_ADD: self._add_panel,
         }
+        # Navigating away from Add via the bottom nav (not Cancel/Save)
+        # discards an in-progress edit (#50) — otherwise tapping Add again
+        # later would confusingly reopen a stale "Edit Sentence" form.
+        if self._tab != self.TAB_ADD and self._editing_sentence is not None:
+            self._exit_edit_mode()
         if self._tab == self.TAB_TODAY:
             self._refresh_today()
         elif self._tab == self.TAB_LIBRARY:
@@ -1602,6 +1608,12 @@ class NeuroLingoApp:
                                 expand=True,
                             ),
                             ft.IconButton(
+                                icon=ft.Icons.EDIT_OUTLINED,
+                                icon_color=_TURQUOISE,
+                                tooltip="Edit sentence",
+                                on_click=lambda _e, s=sentence: self._start_edit_sentence(s),
+                            ),
+                            ft.IconButton(
                                 icon=ft.Icons.DELETE_OUTLINE,
                                 icon_color=_AGAIN,
                                 tooltip="Delete sentence",
@@ -1695,9 +1707,19 @@ class NeuroLingoApp:
 
         save_btn = self._gradient_button("Save Sentence", ft.Icons.SAVE_OUTLINED, self._save_sentence)
 
+        # Reused for both "Add" and "Edit" (#50) — the title and Cancel
+        # button toggle between the two modes; the form fields/save path
+        # stay the same either way.
+        self._add_panel_title = ft.Text(
+            "Add a New Sentence", size=20, color=_INK, font_family=_FONT_DISPLAY,
+        )
+        self._cancel_edit_btn = ft.TextButton(
+            "Cancel", on_click=self._cancel_edit_sentence, visible=False,
+        )
+
         return ft.Column(
             [
-                ft.Text("Add a New Sentence", size=20, color=_INK, font_family=_FONT_DISPLAY),
+                self._add_panel_title,
                 ft.Text(
                     "Vocabulary is only learned in context — always provide the full sentence.",
                     size=12,
@@ -1711,12 +1733,43 @@ class NeuroLingoApp:
                 self._field_notes,
                 ft.Container(height=8),
                 ft.Row([save_btn]),
+                self._cancel_edit_btn,
                 self._save_status,
             ],
             spacing=12,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
+
+    def _start_edit_sentence(self, sentence: Sentence) -> None:
+        """Open the Add form pre-filled with an existing sentence's values,
+        saving via update instead of insert (#50) — reuses the same
+        fields/validation rather than a separate edit screen."""
+        self._editing_sentence = sentence
+        self._field_en.value = sentence.sentence_en
+        self._field_fa.value = sentence.sentence_fa
+        self._field_notes.value = sentence.context_notes
+        self._save_status.value = ""
+        self._add_panel_title.value = "Edit Sentence"
+        self._cancel_edit_btn.visible = True
+        self._go_to_add()
+
+    def _cancel_edit_sentence(self, _e=None) -> None:
+        self._exit_edit_mode()
+        self._content_switcher.content = self._library_panel
+        self.page.navigation_bar.selected_index = self.TAB_LIBRARY
+        self._tab = self.TAB_LIBRARY
+        self.page.update()
+
+    def _exit_edit_mode(self) -> None:
+        """Reset the Add form to its normal 'new sentence' state — used
+        both after cancelling an edit and after any successful save."""
+        self._editing_sentence = None
+        self._field_en.value = ""
+        self._field_fa.value = ""
+        self._field_notes.value = ""
+        self._add_panel_title.value = "Add a New Sentence"
+        self._cancel_edit_btn.visible = False
 
     def _save_sentence(self, _e=None) -> None:
         en = (self._field_en.value or "").strip()
@@ -1729,25 +1782,47 @@ class NeuroLingoApp:
             self.page.update()
             return
 
-        sentence = self.repo.add_sentence(Sentence(
-            sentence_en=en,
-            sentence_fa=fa,
-            context_notes=notes,
-        ))
-        self.repo.add_card(Card(
-            sentence_id=sentence.id,
-            next_review_date=datetime.now(timezone.utc),
-            status=CardStatus.NEW.value,
-        ))
-        self.rag.add_knowledge(format_knowledge_entry(en, notes), metadata={"source": "user"})
+        editing = self._editing_sentence
+        if editing is not None:
+            editing.sentence_en = en
+            editing.sentence_fa = fa
+            editing.context_notes = notes
+            self.repo.update_sentence(editing)
+            _log.info("Sentence updated | id=%d | en=%.40s", editing.id, en)
+            status_message = f"Updated sentence #{editing.id}."
+            source_tag = "user_edit"
+        else:
+            sentence = self.repo.add_sentence(Sentence(
+                sentence_en=en,
+                sentence_fa=fa,
+                context_notes=notes,
+            ))
+            self.repo.add_card(Card(
+                sentence_id=sentence.id,
+                next_review_date=datetime.now(timezone.utc),
+                status=CardStatus.NEW.value,
+            ))
+            _log.info("New sentence saved | id=%d | en=%.40s", sentence.id, en)
+            status_message = f"Saved! Sentence #{sentence.id} added to your review deck."
+            source_tag = "user"
 
-        _log.info("New sentence saved | id=%d | en=%.40s", sentence.id, en)
+        # Index into the AI Tutor's knowledge base (#48). An edit (#50) adds
+        # fresh grounding for the corrected text rather than replacing the
+        # old entry — NumpyVectorStore has no delete-by-id yet, so a stale
+        # duplicate can remain; tracked as a follow-up, not silently ignored.
+        self.rag.add_knowledge(format_knowledge_entry(en, notes), metadata={"source": source_tag})
 
-        self._field_en.value = ""
-        self._field_fa.value = ""
-        self._field_notes.value = ""
-        self._save_status.value = f"Saved! Sentence #{sentence.id} added to your review deck."
+        was_editing = editing is not None
+        self._exit_edit_mode()
+        self._save_status.value = status_message
         self._save_status.color = _EASY
+
+        if was_editing:
+            self._content_switcher.content = self._library_panel
+            self.page.navigation_bar.selected_index = self.TAB_LIBRARY
+            self._tab = self.TAB_LIBRARY
+            self._refresh_library(self._lib_search.value or "")
+
         self.page.update()
 
     # ══════════════════════════════════════════════════════════════════════════
